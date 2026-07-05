@@ -10,6 +10,7 @@ describe('migrations', () => {
       '0001_players.sql',
       '0002_bankroll.sql',
       '0003_tables.sql',
+      '0004_recording.sql',
     ]);
 
     const again = await migrate(db);
