@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import AdminDrawer from '../components/AdminDrawer.jsx';
+import { CreateTableDialog, JoinTableDialog } from '../components/TableDialogs.jsx';
 
 const MODE_LABEL = {
   coached_cash: 'Coached cash',
@@ -8,10 +9,12 @@ const MODE_LABEL = {
   tournament: 'Tournament',
 };
 
-export default function Lobby({ player, onLogout }) {
+export default function Lobby({ player, onLogout, onSeated }) {
   const [tables, setTables] = useState([]);
   const [balance, setBalance] = useState(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [joining, setJoining] = useState(null);
   const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
@@ -56,27 +59,58 @@ export default function Lobby({ player, onLogout }) {
       </header>
 
       <main className="max-w-3xl mx-auto p-4">
-        <h2 className="text-lg font-medium mb-3">Tables</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-medium">Tables</h2>
+          <button
+            onClick={() => setCreating(true)}
+            className="rounded-md bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 text-sm font-medium"
+          >
+            Create table
+          </button>
+        </div>
         {error && <p className="text-rose-400 text-sm mb-3">{error}</p>}
         {tables.length === 0 ? (
           <div className="border border-dashed border-slate-800 rounded-xl p-10 text-center text-slate-500">
-            No tables yet. Game modes arrive in M2.
+            No tables yet. Create one to start playing.
           </div>
         ) : (
           <ul className="space-y-2">
             {tables.map((t) => (
               <li
                 key={t.id}
-                className="border border-slate-800 rounded-lg px-4 py-3 flex justify-between"
+                className="border border-slate-800 rounded-lg px-4 py-3 flex items-center justify-between"
               >
-                <span>{MODE_LABEL[t.mode] ?? t.mode}</span>
-                <span className="text-slate-400 text-sm">{t.status}</span>
+                <div>
+                  <span>{t.config?.name || MODE_LABEL[t.mode] || t.mode}</span>
+                  <span className="text-slate-500 text-sm ml-2">
+                    {t.config ? `${t.config.smallBlind}/${t.config.bigBlind} · ${t.config.tableSize}-max` : ''}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-slate-400 text-sm">
+                    {t.seated ?? 0}/{t.config?.tableSize ?? '–'} seated · {t.status}
+                  </span>
+                  {t.mode === 'uncoached_cash' && (
+                    <button
+                      onClick={() => setJoining(t)}
+                      className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1 text-sm"
+                    >
+                      Join
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
         )}
       </main>
 
+      {creating && (
+        <CreateTableDialog onClose={() => setCreating(false)} onSeated={onSeated} />
+      )}
+      {joining && (
+        <JoinTableDialog table={joining} onClose={() => setJoining(null)} onSeated={onSeated} />
+      )}
       {player.role === 'coach' && drawerOpen && (
         <AdminDrawer onClose={() => setDrawerOpen(false)} onChanged={refresh} />
       )}

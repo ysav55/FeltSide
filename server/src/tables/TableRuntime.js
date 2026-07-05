@@ -253,6 +253,7 @@ export class TableRuntime {
 
   _armActionTimer(playerId) {
     clearTimeout(this._timers.action);
+    this.actionDeadline = Date.now() + this.timers.actionMs;
     this._timers.action = setTimeout(() => {
       this._enqueue(async () => {
         if (this.closed) return;
@@ -330,6 +331,7 @@ export class TableRuntime {
       name: this.config.name || null,
       status: this.closed ? 'completed' : this.status,
       connected: [...this.connected],
+      actionDeadline: state.toAct !== null ? this.actionDeadline : null,
       ...state,
     };
   }

@@ -1,23 +1,50 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, getToken, setToken } from './api.js';
+import { resetSocket } from './socket.js';
 import Login from './pages/Login.jsx';
 import Lobby from './pages/Lobby.jsx';
+import TablePage from './pages/TablePage.jsx';
 
 export default function App() {
   const [player, setPlayer] = useState(null);
+  const [table, setTable] = useState(null);
   const [booting, setBooting] = useState(Boolean(getToken()));
 
+  // Boot: restore session, and if seated somewhere, return to that table
+  // with live state (M2 reconnect rule).
   useEffect(() => {
     if (!getToken()) return;
-    api('/auth/me')
-      .then(({ player: me }) => setPlayer(me))
-      .catch(() => setToken(null))
-      .finally(() => setBooting(false));
+    (async () => {
+      try {
+        const { player: me } = await api('/auth/me');
+        setPlayer(me);
+        if (!me.must_change_password) {
+          const { table: seated } = await api('/tables/me');
+          if (seated) setTable(seated);
+        }
+      } catch {
+        setToken(null);
+      } finally {
+        setBooting(false);
+      }
+    })();
   }, []);
 
   const handleLogout = useCallback(() => {
     setToken(null);
+    resetSocket();
     setPlayer(null);
+    setTable(null);
+  }, []);
+
+  const handleAuthenticated = useCallback(async (me) => {
+    setPlayer(me);
+    if (!me.must_change_password) {
+      try {
+        const { table: seated } = await api('/tables/me');
+        if (seated) setTable(seated);
+      } catch { /* lobby is fine */ }
+    }
   }, []);
 
   if (booting) {
@@ -30,13 +57,19 @@ export default function App() {
 
   if (!player || player.must_change_password) {
     return (
-      <Login
+      <Login player={player} onAuthenticated={handleAuthenticated} onLogout={handleLogout} />
+    );
+  }
+
+  if (table) {
+    return (
+      <TablePage
         player={player}
-        onAuthenticated={setPlayer}
-        onLogout={handleLogout}
+        table={table}
+        onLeft={() => setTable(null)}
       />
     );
   }
 
-  return <Lobby player={player} onLogout={handleLogout} />;
+  return <Lobby player={player} onLogout={handleLogout} onSeated={setTable} />;
 }
