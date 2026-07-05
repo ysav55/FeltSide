@@ -102,4 +102,4 @@ function buildSidePots(players) {
   return sidePots;
 }
 
-module.exports = { buildSidePots };
+export { buildSidePots };

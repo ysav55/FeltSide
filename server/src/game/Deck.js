@@ -14,10 +14,11 @@ function createDeck() {
   return deck;
 }
 
-function shuffleDeck(deck) {
+// rng is injectable for deterministic dealing in tests (defaults to Math.random)
+function shuffleDeck(deck, rng = Math.random) {
   const d = [...deck];
   for (let i = d.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng() * (i + 1));
     [d[i], d[j]] = [d[j], d[i]];
   }
   return d;
@@ -44,4 +45,4 @@ function getUsedCards(state) {
   return used;
 }
 
-module.exports = { createDeck, shuffleDeck, isValidCard, getUsedCards, RANKS, SUITS };
+export { createDeck, shuffleDeck, isValidCard, getUsedCards, RANKS, SUITS };

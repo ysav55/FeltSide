@@ -1,4 +1,3 @@
-'use strict';
 
 /**
  * ShowdownResolver.js — pure showdown computation.
@@ -8,8 +7,8 @@
  * returned stack deltas and stores the showdown_result.
  */
 
-const { evaluate, compareHands } = require('./HandEvaluator');
-const { buildSidePots } = require('./SidePotCalculator');
+import { evaluate, compareHands } from './HandEvaluator.js';
+import { buildSidePots } from './SidePotCalculator.js';
 
 /**
  * Sort winner entries by proximity to the small blind seat (clockwise).
@@ -152,4 +151,4 @@ function resolve(activePlayers, allPlayers, board, pot) {
   return { showdown_result, stackDeltas, pot: 0, winner, winner_name, side_pots };
 }
 
-module.exports = { resolve, sortBySBProximity: _sortBySBProximity };
+export { resolve, _sortBySBProximity as sortBySBProximity };

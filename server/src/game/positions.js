@@ -1,4 +1,3 @@
-'use strict';
 
 /**
  * Poker position utilities.
@@ -94,4 +93,4 @@ function isInPosition(seated, dealerSeat, playerIdA, playerIdB) {
   return offsetA < offsetB;
 }
 
-module.exports = { getPosition, buildPositionMap, isInPosition, POSITION_NAMES };
+export { getPosition, buildPositionMap, isInPosition, POSITION_NAMES };

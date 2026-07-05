@@ -1,4 +1,3 @@
-'use strict';
 
 /**
  * bettingRound.js — pure helper functions for the within-street action loop.
@@ -39,4 +38,4 @@ function findNextActingPlayer(players, fromId) {
   return null;
 }
 
-module.exports = { isBettingRoundOver, findNextActingPlayer };
+export { isBettingRoundOver, findNextActingPlayer };

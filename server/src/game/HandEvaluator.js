@@ -1,4 +1,3 @@
-'use strict';
 
 /**
  * HandEvaluator.js
@@ -10,7 +9,7 @@
  * Pure functions only — no side effects, no imports from GameManager.
  */
 
-const { RANKS } = require('./Deck');
+import { RANKS } from './Deck.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -473,4 +472,4 @@ function evaluateShort(cards) {
 // Exports
 // ---------------------------------------------------------------------------
 
-module.exports = { evaluate, compareHands, HAND_RANKS, evaluateFive };
+export { evaluate, compareHands, HAND_RANKS, evaluateFive };
