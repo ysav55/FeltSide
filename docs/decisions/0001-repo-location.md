@@ -1,15 +1,14 @@
-# 0001 — FeltSide lives inside the poker-trainer repo for now
+# 0001 — FeltSide is a local standalone repo pending GitHub creation
 
 **Context:** M1 Step 0 asks for `git init` + a private GitHub repo named
-`FeltSide`. This implementation session is hard-scoped to the
-`ysav55/poker-trainer` repository (branch
-`claude/feltside-bootstrap-setup-6ba75x`) — it cannot create or push to any
-other repository.
+`FeltSide`. `git init` is done (`/home/user/FeltSide`, branch `main`), but
+this session's GitHub integration cannot create repositories (403) and
+adding an external repo requires an interactive approval that was not
+available.
 
-**Decision:** Build FeltSide as the `FeltSide/` directory inside
-poker-trainer on the designated branch, using M1's own fallback ("stay
-local and tell Jo to create/push later"). Jo: create the private `FeltSide`
-repo and lift this directory out (its history is contained in this branch).
+**Decision:** Per M1 Step 0's fallback, the repo stays local. Jo: create a
+private `FeltSide` repo on GitHub (or approve `add_repo` in a session) and
+push this directory's `main` branch to it.
 
-**Justification:** The only path that preserves the work durably under the
-session's push constraints; explicitly permitted by M1 Step 0's fallback.
+**Justification:** Explicitly the prescribed fallback in M1 Step 0; no
+guessing involved.

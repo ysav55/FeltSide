@@ -1,0 +1,16 @@
+{
+  "name": "feltside",
+  "private": true,
+  "version": "0.1.0",
+  "description": "FeltSide — poker game engine (M1 foundation)",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "test": "npm test --workspace=server && npm test --workspace=client",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "db:migrate": "npm run db:migrate --workspace=server"
+  }
+}
