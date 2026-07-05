@@ -50,3 +50,21 @@ module by name and note the correction in docs/decisions/.
    anything outside the new tree, (c) all registered findings on it fixed.
 3. Graduated files are MOVED (not copied) to server/ or client/; this
    folder must be empty and deleted by the end of M7.
+
+---
+
+## Amendment (M2 Step 0.2 — see docs/decisions/0004)
+
+Verified against the old repo's full git history (38 commits): five listed
+files never existed under any name. Reality:
+
+| Manifest entry | Outcome |
+|----------------|---------|
+| server/game/BoardGenerator.js | Never existed. Texture logic lives inside HandGenerator.js → extracted to `legacy/extracted/boardTexture.js` |
+| server/game/EquityService.js | Never existed; NO equity computation anywhere in the old repo. M5's ALLIN_* tags need a new implementation |
+| client/src/utils/comboUtils.js | Never existed. Combo expansion/intersection lives in HandConfigPanel.jsx → extracted to `legacy/extracted/RangePresetPicker.jsx` |
+| client/src/components/RangeMatrix.jsx | Never existed. The old range UI is a preset-chip picker (no 13×13 matrix) → same extraction |
+| client/src/components/RangePicker.jsx | Never existed (CardPicker.jsx is a single-card picker, not a range picker) → same extraction |
+
+`legacy/extracted/` holds raw material, not working modules. The M4 range
+matrix and M5 equity service must be built new.
