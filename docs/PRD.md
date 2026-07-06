@@ -120,8 +120,11 @@ tables).
   SidePotCalculator, bettingRound, Deck, RangeParser, positions,
   BoardGenerator, EquityService, comboUtils. HandGenerator only with
   ARCH-10 fixed (silent texture fallback → visible error).
-- **Must-carry gold:** RangeMatrix + RangePicker — they power the chart
-  editor, range-deal, and scenario ranges.
+- **Built new in M4 (amended per decisions/0004):** the range matrix and
+  range picker — they power the chart editor, range-deal, and scenario
+  ranges. The old repo never contained them; `legacy/extracted/*` (preset
+  vocabulary, combo intersection, board texture) is raw material only,
+  not a module to graduate.
 - **Audit before adoption:** ReplayEngine (fix mutation-by-reference /
   ARCH-05), PokerTable, BettingControls — judged individually.
 - **Rebuild lean, never adopt:** GameManager and successors, controllers,

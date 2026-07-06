@@ -1,5 +1,13 @@
 import { computeCounters } from '../game/counters.js';
 
+/**
+ * Export-seq stamping (CONTRACT §3): every stamp takes this advisory lock
+ * inside its transaction, so seq assignment order == commit order ==
+ * visibility order. A poll can therefore never observe seq N while a lower
+ * seq is still uncommitted — "resuming from a returned cursor never skips".
+ */
+const EXPORT_SEQ_LOCK = 815001;
+
 export function buildRecordingRepo(db) {
   return {
     async openSession({ tableId, tableMode, crmEntryId = null }) {
@@ -12,15 +20,48 @@ export function buildRecordingRepo(db) {
     },
 
     async finalizeSession(sessionId) {
-      const { rows } = await db.query(
-        `update sessions
-            set status = 'completed', ended_at = now(),
-                hand_count = (select count(*) from hands where session_id = $1)
-          where id = $1 and status = 'open'
-          returning *`,
-        [sessionId]
-      );
-      return rows[0] || null;
+      await db.query('begin');
+      try {
+        await db.query('select pg_advisory_xact_lock($1)', [EXPORT_SEQ_LOCK]);
+        const { rows } = await db.query(
+          `update sessions
+              set status = 'completed', ended_at = now(),
+                  hand_count = (select count(*) from hands where session_id = $1),
+                  export_seq = nextval('export_seq')
+            where id = $1 and status = 'open'
+            returning *`,
+          [sessionId]
+        );
+        await db.query('commit');
+        return rows[0] || null;
+      } catch (err) {
+        await db.query('rollback');
+        throw err;
+      }
+    },
+
+    /**
+     * Revision bump (CONTRACT §4.5): coach re-tagging re-emits the full hand.
+     * Re-stamping export_seq puts the hand back into the cursor stream; M6
+     * triggers bumps — the plumbing and its tests land in M3.
+     */
+    async bumpRevision(handId) {
+      await db.query('begin');
+      try {
+        await db.query('select pg_advisory_xact_lock($1)', [EXPORT_SEQ_LOCK]);
+        const { rows } = await db.query(
+          `update hands
+              set revision = revision + 1, export_seq = nextval('export_seq')
+            where id = $1
+            returning *`,
+          [handId]
+        );
+        await db.query('commit');
+        return rows[0] || null;
+      } catch (err) {
+        await db.query('rollback');
+        throw err;
+      }
     },
 
     async findOpenSession(tableId) {
@@ -40,9 +81,10 @@ export function buildRecordingRepo(db) {
       const counters = computeCounters(record);
       await db.query('begin');
       try {
+        await db.query('select pg_advisory_xact_lock($1)', [EXPORT_SEQ_LOCK]);
         const { rows } = await db.query(
-          `insert into hands (session_id, origin, board, pot)
-           values ($1, $2, $3, $4) returning id`,
+          `insert into hands (session_id, origin, board, pot, export_seq)
+           values ($1, $2, $3, $4, nextval('export_seq')) returning id`,
           [sessionId, record.origin, JSON.stringify(record.board), record.pot]
         );
         const handId = rows[0].id;

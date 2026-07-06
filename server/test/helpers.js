@@ -6,6 +6,8 @@ import { seedCoach } from '../src/seed.js';
 
 export const TEST_CONFIG = {
   port: 0,
+  exportApiKey: 'test-export-key',
+  publicBaseUrl: 'https://engine.test',
   jwtSecret: 'test-secret',
   jwtExpiresIn: '1h',
   coachEmail: 'coach@test.local',

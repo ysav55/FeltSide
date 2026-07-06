@@ -9,6 +9,14 @@ const MODE_LABEL = {
   tournament: 'Tournament',
 };
 
+function fmtStart(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString([], {
+    weekday: 'short', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  });
+}
+
 export default function Lobby({ player, onLogout, onSeated }) {
   const [tables, setTables] = useState([]);
   const [balance, setBalance] = useState(null);
@@ -87,16 +95,37 @@ export default function Lobby({ player, onLogout, onSeated }) {
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-slate-400 text-sm">
-                    {t.seated ?? 0}/{t.config?.tableSize ?? '–'} seated · {t.status}
-                  </span>
-                  {t.mode === 'uncoached_cash' && (
-                    <button
-                      onClick={() => setJoining(t)}
-                      className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1 text-sm"
-                    >
-                      Join
-                    </button>
+                  {t.status === 'scheduled' ? (
+                    <>
+                      {player.role === 'coach' && (t.config?.unmappedStudentIds?.length ?? 0) > 0 && (
+                        <span
+                          className="rounded-full bg-amber-950 text-amber-400 border border-amber-800 px-2 py-0.5 text-xs"
+                          title={`Unmapped students: ${t.config.unmappedStudentIds.join(', ')}`}
+                        >
+                          {t.config.unmappedStudentIds.length} unmapped
+                        </span>
+                      )}
+                      <span className="text-slate-400 text-sm">
+                        {fmtStart(t.scheduled_start)}
+                      </span>
+                      <span className="rounded-md bg-slate-900 border border-slate-800 px-3 py-1 text-sm text-slate-500">
+                        Opens at lesson time
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-slate-400 text-sm">
+                        {t.seated ?? 0}/{t.config?.tableSize ?? '–'} seated · {t.status}
+                      </span>
+                      {t.mode === 'uncoached_cash' && (
+                        <button
+                          onClick={() => setJoining(t)}
+                          className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1 text-sm"
+                        >
+                          Join
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </li>

@@ -7,9 +7,15 @@ export function loadConfig(env = process.env) {
     return v;
   };
 
+  const port = Number(env.PORT || 3001);
+
   return {
-    port: Number(env.PORT || 3001),
+    port,
     databaseUrl: env.SUPABASE_DB_URL || null, // required at boot, not for tests
+    // CONTRACT §2: the one static export/sync API key. Never logged.
+    exportApiKey: required('EXPORT_API_KEY'),
+    // CONTRACT §4.4: review_url base — format locked as <base>/review/<hand_id>.
+    publicBaseUrl: (env.PUBLIC_BASE_URL || `http://localhost:${port}`).replace(/\/+$/, ''),
     jwtSecret: required('JWT_SECRET'),
     jwtExpiresIn: env.JWT_EXPIRES_IN || '12h',
     coachEmail: required('COACH_EMAIL'),

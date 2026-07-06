@@ -30,3 +30,9 @@ poker-trainer repo for the five files missing at M1 import
 **Consequences:** The M4 range-matrix editor and the M5 equity service
 (ALLIN_FAVORITE/UNDERDOG/FLIP thresholds) must be built new; nothing to
 graduate. Flagged for planning.
+
+**Amendment (M3 Step 0.2):** PRD §9 updated to match this outcome — the
+"must-carry gold" bullet no longer claims RangeMatrix/RangePicker are
+carried legacy modules; they are BUILT NEW in M4, with `legacy/extracted/*`
+as raw material only. The constitution now tells the truth the search
+established.

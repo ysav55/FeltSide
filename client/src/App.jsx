@@ -4,6 +4,13 @@ import { resetSocket } from './socket.js';
 import Login from './pages/Login.jsx';
 import Lobby from './pages/Lobby.jsx';
 import TablePage from './pages/TablePage.jsx';
+import ReviewPage from './pages/ReviewPage.jsx';
+
+/** /review/:handId — reserved in M3 (CONTRACT §4.4 review_url), filled in M6. */
+function reviewHandId() {
+  const m = /^\/review\/([A-Za-z0-9-]+)\/?$/.exec(window.location.pathname);
+  return m ? m[1] : null;
+}
 
 export default function App() {
   const [player, setPlayer] = useState(null);
@@ -59,6 +66,11 @@ export default function App() {
     return (
       <Login player={player} onAuthenticated={handleAuthenticated} onLogout={handleLogout} />
     );
+  }
+
+  const handId = reviewHandId();
+  if (handId) {
+    return <ReviewPage player={player} handId={handId} onLogout={handleLogout} />;
   }
 
   if (table) {
