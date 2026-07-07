@@ -2,7 +2,7 @@ import http from 'node:http';
 import pg from 'pg';
 import { loadConfig } from './config.js';
 import { createApp } from './app.js';
-import { seedCoach } from './seed.js';
+import { seedCoach, seedTournamentPresets } from './seed.js';
 import { attachSockets } from './socket.js';
 
 const config = loadConfig();
@@ -12,6 +12,7 @@ if (!config.databaseUrl) {
 
 const db = new pg.Pool({ connectionString: config.databaseUrl });
 const seeded = await seedCoach(db, config);
+await seedTournamentPresets(db); // TOURNAMENTS §2, idempotent
 
 const app = createApp({ db, config });
 const tableService = app.locals.tableService;
@@ -33,6 +34,12 @@ const pruneStale = () =>
     .catch(() => {});
 await pruneStale();
 setInterval(pruneStale, 60 * 60 * 1000).unref();
+
+// TOURNAMENTS §3: CRM-pushed tournaments open registration on their own
+// once inside the 1h window — checked at boot and hourly.
+const autoOpen = () => tableService.autoOpenTournaments().catch(() => {});
+await autoOpen();
+setInterval(autoOpen, 60 * 60 * 1000).unref();
 
 server.listen(config.port, () => {
   console.log(

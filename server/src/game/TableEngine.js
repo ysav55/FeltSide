@@ -140,26 +140,44 @@ export class TableEngine {
       this.handStartStacks[s.playerId] = s.stack;
     }
 
-    // Button rotation: next eligible seat clockwise. First hand: lowest seat.
-    this.button = this.button === null
-      ? players[0].seatIndex
-      : this._nextSeatIndex(this.button, players);
+    let deadSb = false;
+    if (this.config.tournamentBlinds) {
+      // Tournament dead-button rules (TOURNAMENTS §4): the BB advances one
+      // OCCUPIED seat every hand — nobody skips it, nobody double-posts,
+      // regardless of eliminations or balancing moves. The SB is the seat
+      // that just held the BB (dead — no post — if its player is gone);
+      // the button is the seat that just held the SB (may be empty).
+      deadSb = this._computeTournamentSeats(players);
+      this.positions = this._tournamentPositions(players, deadSb);
+    } else {
+      // Button rotation: next eligible seat clockwise. First hand: lowest seat.
+      this.button = this.button === null
+        ? players[0].seatIndex
+        : this._nextSeatIndex(this.button, players);
 
-    // Blinds. Heads-up: the button IS the small blind (acts first preflop,
-    // last postflop); 3+ handed: SB and BB are the next two seats clockwise.
-    const headsUp = players.length === 2;
-    this.sbSeat = headsUp ? this.button : this._nextSeatIndex(this.button, players);
-    this.bbSeat = this._nextSeatIndex(this.sbSeat, players);
+      // Blinds. Heads-up: the button IS the small blind (acts first preflop,
+      // last postflop); 3+ handed: SB and BB are the next two seats clockwise.
+      const headsUp = players.length === 2;
+      this.sbSeat = headsUp ? this.button : this._nextSeatIndex(this.button, players);
+      this.bbSeat = this._nextSeatIndex(this.sbSeat, players);
 
-    this.positions = buildPositionMap(
-      players
-        .map((s) => ({ player_id: s.playerId, seat: s.seatIndex }))
-        .sort((a, b) => a.seat - b.seat),
-      this.button
-    );
+      this.positions = buildPositionMap(
+        players
+          .map((s) => ({ player_id: s.playerId, seat: s.seatIndex }))
+          .sort((a, b) => a.seat - b.seat),
+        this.button
+      );
+    }
 
     this.phase = 'preflop';
-    this._postBlind(this._seatAt(this.sbSeat), this.config.smallBlind, 'post_sb');
+    // BB ante (TOURNAMENTS §1): dead money, posted by the BB before the
+    // blinds; never counts toward the betting level.
+    if ((this.config.bbAnte ?? 0) > 0) {
+      this._postAnte(this._seatAt(this.bbSeat), this.config.bbAnte);
+    }
+    if (!deadSb) {
+      this._postBlind(this._seatAt(this.sbSeat), this.config.smallBlind, 'post_sb');
+    }
     this._postBlind(this._seatAt(this.bbSeat), this.config.bigBlind, 'post_bb');
     this.currentBet = this.config.bigBlind;
     this.minRaiseSize = this.config.bigBlind;
@@ -448,6 +466,107 @@ export class TableEngine {
     this._log(seat, label, posted);
   }
 
+  /** BB ante: dead money into the pot — no effect on the betting level. */
+  _postAnte(seat, amount) {
+    const posted = Math.min(amount, seat.stack);
+    seat.stack -= posted;
+    seat.contributed += posted; // pot + side-pot math see it; betThisRound doesn't
+    if (seat.stack === 0) seat.allIn = true;
+    this._log(seat, 'post_ante', posted);
+  }
+
+  /** Blind/ante level change between hands (tournaments). */
+  setLevelBlinds({ smallBlind, bigBlind, bbAnte = 0 }) {
+    if (this.isHandRunning()) throw new EngineError('hand_in_progress');
+    this.config.smallBlind = smallBlind;
+    this.config.bigBlind = bigBlind;
+    this.config.bbAnte = bbAnte;
+  }
+
+  /**
+   * Dead-button seat computation (tournamentBlinds mode). Returns true when
+   * the SB is dead (seat empty → no small blind posted this hand).
+   */
+  _computeTournamentSeats(players) {
+    const n = this.seats.length;
+    const nextOccupied = (from) => {
+      for (let i = 1; i <= n; i++) {
+        const idx = (from + i) % n;
+        const s = this.seats[idx];
+        if (s && s.inHand) return idx;
+      }
+      return from;
+    };
+
+    if (this._prevBb === undefined || this._prevBb === null) {
+      // First hand of the table: standard draw from the lowest seat.
+      this.button = players[0].seatIndex;
+      if (players.length === 2) {
+        this.sbSeat = this.button;
+        this.bbSeat = nextOccupied(this.sbSeat);
+      } else {
+        this.sbSeat = nextOccupied(this.button);
+        this.bbSeat = nextOccupied(this.sbSeat);
+      }
+      this._prevSb = this.sbSeat;
+      this._prevBb = this.bbSeat;
+      return false;
+    }
+
+    const bb = nextOccupied(this._prevBb);
+    let deadSb = false;
+    if (players.length === 2) {
+      const other = players.find((p) => p.seatIndex !== bb);
+      this.bbSeat = bb;
+      this.sbSeat = other.seatIndex; // heads-up: button IS the small blind
+      this.button = other.seatIndex;
+    } else {
+      this.bbSeat = bb;
+      this.sbSeat = this._prevBb;                 // the seat that just had the BB
+      const sbSeatObj = this.seats[this.sbSeat];
+      deadSb = !(sbSeatObj && sbSeatObj.inHand);  // its player busted/moved → dead SB
+      this.button = this._prevSb;                 // may be an empty seat: dead button
+    }
+    this._prevSb = this.sbSeat;
+    this._prevBb = this.bbSeat;
+    return deadSb;
+  }
+
+  /**
+   * Position labels for tournament hands. Normal hands (all blinds live)
+   * match the standard clockwise-from-button naming exactly; dead-blind
+   * hands label BB/SB from the actual blind seats and fill the rest from
+   * the button backwards (vocabulary stays within the standard set).
+   */
+  _tournamentPositions(players, deadSb) {
+    const n = this.seats.length;
+    const order = []; // clockwise starting after the BB, ending at the BB
+    for (let i = 1; i <= n; i++) {
+      const idx = (this.bbSeat + i) % n;
+      const s = this.seats[idx];
+      if (s && s.inHand) order.push(s.playerId);
+    }
+    const count = order.length;
+    const out = {};
+    const bbPlayer = order[count - 1];
+    out[bbPlayer] = 'BB';
+    let rest = order.slice(0, count - 1); // clockwise after BB … up to the seat before BB
+    if (!deadSb && count >= 3) {
+      out[rest[rest.length - 1]] = 'SB';
+      rest = rest.slice(0, rest.length - 1);
+    } else if (count === 2) {
+      out[rest[0]] = 'BTN';
+      return out;
+    }
+    // rest is clockwise [UTG-most … button-most]; assign from the button back.
+    const NONBLIND = ['BTN', 'CO', 'HJ', 'MP', 'UTG+2', 'UTG+1', 'UTG'];
+    for (let i = 0; i < rest.length; i++) {
+      const fromButton = rest.length - 1 - i; // 0 = button-most
+      out[rest[i]] = NONBLIND[Math.min(fromButton, NONBLIND.length - 1)];
+    }
+    return out;
+  }
+
   _commit(seat, amount) {
     seat.stack -= amount;
     seat.betThisRound += amount;
@@ -697,7 +816,7 @@ export class TableEngine {
   }
 
   /** Rebuild seating from a snapshot on boot — voids any in-flight hand. */
-  restoreSeats(snapshot, { button = null } = {}) {
+  restoreSeats(snapshot, { button = null, prevBb = null, prevSb = null } = {}) {
     this.seats = new Array(this.config.tableSize).fill(null);
     for (const s of snapshot) {
       this.seatPlayer({
@@ -706,6 +825,9 @@ export class TableEngine {
       if (s.sittingOut) this.setSitOut(s.playerId, true);
     }
     this.button = button;
+    // Tournament dead-button progression survives a restart (RUNTIME §1).
+    if (prevBb !== null) this._prevBb = prevBb;
+    if (prevSb !== null) this._prevSb = prevSb;
     this.phase = 'waiting';
   }
 }

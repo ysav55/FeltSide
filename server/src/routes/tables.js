@@ -65,7 +65,9 @@ export function buildTablesRoutes({ tablesRepo, tableService, requireAuth }) {
   router.post('/:id/open', requireAuth(), async (req, res, next) => {
     try {
       if (req.player.role !== 'coach') return res.status(403).json({ error: 'coach_only' });
-      const runtime = await tableService.openScheduled(req.params.id, req.player);
+      const runtime = await tableService.openScheduled(req.params.id, req.player, {
+        presetId: (req.body || {}).preset_id ?? null, // tournament preset override
+      });
       res.json({ table: runtime.publicState(req.player.id) });
     } catch (err) {
       if (engineErrorToHttp(err, res)) return;

@@ -11,7 +11,7 @@ import { TAG_VOCABULARY, TAG_VOCABULARY_VERSION } from '../export/vocabulary.js'
  * JSON numbers, timestamps to UTC ISO-8601 strings.
  */
 
-export const ENGINE_VERSION = '0.5.0'; // M4+M5
+export const ENGINE_VERSION = '0.7.0'; // M7
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -66,7 +66,7 @@ export function buildExportRoutes({ exportRepo, config }) {
           crm_student_id: p.crm_student_id ?? null,
           hands_played: Number(p.hands_played),
           net_chips: Number(p.net_chips),
-          finish_position: null, // tournaments arrive in M7
+          finish_position: p.finish_position ?? null, // tournaments only
         })),
       })));
     } catch (err) { next(err); }
@@ -142,9 +142,19 @@ export function buildExportRoutes({ exportRepo, config }) {
     } catch (err) { next(err); }
   });
 
-  // §4.7 — tournament-preset catalog snapshot; valid empty catalog until M7.
-  router.get('/tournament-presets', (req, res) => {
-    res.json({ data: [] });
+  // §4.7 — tournament-preset catalog snapshot (real since M7).
+  router.get('/tournament-presets', async (req, res, next) => {
+    try {
+      const rows = await exportRepo.listTournamentPresets();
+      res.json({
+        data: rows.map((p) => ({
+          preset_id: p.id,
+          name: p.name,
+          description: p.description ?? '',
+          updated_at: iso(p.updated_at),
+        })),
+      });
+    } catch (err) { next(err); }
   });
 
   return router;

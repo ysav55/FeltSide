@@ -35,15 +35,22 @@ export function buildExportRepo(db) {
       let participantsBySession = new Map();
       if (page.length > 0) {
         const ids = page.map((s) => s.id);
+        // finish_position (CONTRACT §4.3): tournaments only, null otherwise —
+        // joined through the session's anchor table.
         const { rows } = await db.query(
           `select h.session_id, hp.player_id, p.crm_student_id,
                   count(*)::int as hands_played,
-                  sum(hp.stack_end - hp.stack_start) as net_chips
+                  sum(hp.stack_end - hp.stack_start) as net_chips,
+                  te.finish_position
              from hands h
              join hand_participants hp on hp.hand_id = h.id
              join players p on p.id = hp.player_id
+             join sessions s on s.id = h.session_id
+             left join tournaments t on t.table_id = s.table_id
+             left join tournament_entries te
+               on te.tournament_id = t.id and te.player_id = hp.player_id
             where h.session_id = any($1)
-            group by h.session_id, hp.player_id, p.crm_student_id
+            group by h.session_id, hp.player_id, p.crm_student_id, te.finish_position
             order by hp.player_id`,
           [ids]
         );
@@ -101,6 +108,16 @@ export function buildExportRepo(db) {
         tagsByHand = groupBy(tagRows, (r) => r.hand_id);
       }
       return { page, hasMore, participantsByHand, actionsByHand, tagsByHand };
+    },
+
+    /** §4.7 — tournament-preset catalog snapshot (real since M7). */
+    async listTournamentPresets() {
+      const { rows } = await db.query(
+        `select id, name, description, updated_at
+           from tournament_presets
+          order by created_at`
+      );
+      return rows;
     },
 
     /** §4.6 — playlist catalog snapshot (real since M4). */

@@ -64,7 +64,11 @@ export function attachSockets({ httpServer, config, tableService }) {
 
     socket.on('table:enter', ({ tableId } = {}, cb) => {
       const runtime = tableService.get(tableId);
-      const seat = runtime && !runtime.closed && runtime.engine.findSeat(socket.playerId);
+      // Tournament membership = registered (a busted player still watches
+      // and may re-enter, §3); cash membership = seated.
+      const seat = runtime && !runtime.closed && (runtime.hasPlayer
+        ? runtime.hasPlayer(socket.playerId)
+        : runtime.engine.findSeat(socket.playerId));
       if (!seat) return cb?.({ error: 'not_seated' });
       socket.join(`table:${tableId}`);
       socket.tableId = tableId;
@@ -141,12 +145,28 @@ export function attachSockets({ httpServer, config, tableService }) {
       'review:exit':  (rt) => { rt.exitGroupReview(); return { exited: true }; },
     };
 
+    // ── Tournament interventions (TOURNAMENTS §6) — same coach gate ─────
+    const tournamentCommands = {
+      'start':          (rt) => rt.start(),
+      'pause':          (rt, p) => rt.pause(Boolean(p.paused)),
+      'advance-level':  (rt) => rt.advanceLevel(),
+      'extend-level':   (rt, p) => rt.extendLevel(Number(p.ms) || 0),
+      'auto-balance':   (rt, p) => rt.setAutoBalance(Boolean(p.on)),
+      'move':           (rt, p) => rt.coachMove(p.player_id, p.table_no, p.seat_index),
+      'eliminate':      (rt, p) => rt.coachEliminate(p.player_id),
+      'view-table':     (rt, p) => rt.setViewTable(p.table_no), // fast switching (§9)
+      'end-early':      (rt) => rt.endEarly(),
+      'deal:propose':   (rt) => rt.proposeDeal(),
+      'deal:cancel':    (rt) => rt.cancelDeal(),
+      'state':          (rt) => rt.coachState(),
+    };
+
     socket.on('coach:command', async ({ tableId, command, payload = {} } = {}, cb) => {
       if (socket.role !== 'coach') return cb?.({ error: 'coach_only' });
       const runtime = tableService.get(tableId);
       if (!runtime || runtime.closed) return cb?.({ error: 'not_found' });
       if (!runtime.coachState) return cb?.({ error: 'not_coached' });
-      const handler = coachCommands[command];
+      const handler = (runtime.mode === 'tournament' ? tournamentCommands : coachCommands)[command];
       if (!handler) return cb?.({ error: 'unknown_command' });
       try {
         const result = await handler(runtime, payload, socket);

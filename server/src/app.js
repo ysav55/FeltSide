@@ -12,6 +12,7 @@ import { buildScenariosRepo } from './repos/scenariosRepo.js';
 import { buildPlaylistsRepo } from './repos/playlistsRepo.js';
 import { buildSettingsRepo } from './repos/settingsRepo.js';
 import { buildHandReadRepo } from './repos/handReadRepo.js';
+import { buildTournamentsRepo, buildTournamentPresetsRepo } from './repos/tournamentsRepo.js';
 import { TableService } from './tables/TableService.js';
 import { buildAuthRoutes } from './routes/auth.js';
 import { buildPlayersRoutes } from './routes/players.js';
@@ -23,6 +24,7 @@ import { buildAnalyzerSettingsRoutes } from './routes/analyzerSettings.js';
 import { buildReviewRoutes } from './routes/review.js';
 import { buildExportRoutes } from './routes/export.js';
 import { buildSyncRoutes } from './routes/sync.js';
+import { buildTournamentPresetsRoutes, buildTournamentsRoutes } from './routes/tournaments.js';
 
 const CLIENT_DIST = join(dirname(fileURLToPath(import.meta.url)), '../../client/dist');
 
@@ -36,10 +38,15 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
   const playlistsRepo = buildPlaylistsRepo(db);
   const settingsRepo = buildSettingsRepo(db);
   const handReadRepo = buildHandReadRepo(db);
+  const tournamentsRepo = buildTournamentsRepo(db);
+  const tournamentPresetsRepo = buildTournamentPresetsRepo(db);
   const { requireAuth, requireCoach } = buildAuthMiddleware({ config, playersRepo });
 
   const service = tableService ?? new TableService({
-    repos: { tablesRepo, bankrollRepo, recordingRepo, playersRepo, scenariosRepo, playlistsRepo, handReadRepo },
+    repos: {
+      tablesRepo, bankrollRepo, recordingRepo, playersRepo, scenariosRepo,
+      playlistsRepo, handReadRepo, tournamentsRepo, tournamentPresetsRepo,
+    },
     timers: tableTimers,
     cardSourceFactory,
     // Analyzer settings snapshot per completed hand (non-retroactive, §6).
@@ -67,6 +74,12 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
   app.use('/api/scenarios', buildScenariosRoutes({ scenariosRepo, requireAuth, requireCoach }));
   app.use('/api/playlists', buildPlaylistsRoutes({ playlistsRepo, requireAuth, requireCoach }));
   app.use('/api/analyzer-settings', buildAnalyzerSettingsRoutes({ settingsRepo, requireAuth, requireCoach }));
+  app.use('/api/tournament-presets', buildTournamentPresetsRoutes({
+    tournamentPresetsRepo, requireAuth, requireCoach,
+  }));
+  app.use('/api/tournaments', buildTournamentsRoutes({
+    tableService: service, playersRepo, requireAuth, requireCoach,
+  }));
   app.use('/api/hands', buildReviewRoutes({
     handReadRepo, recordingRepo, scenariosRepo, requireAuth, requireCoach,
   }));
@@ -94,6 +107,7 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
   app.locals.repos = {
     playersRepo, bankrollRepo, tablesRepo, recordingRepo,
     scenariosRepo, playlistsRepo, settingsRepo, handReadRepo,
+    tournamentsRepo, tournamentPresetsRepo,
   };
   app.locals.tableService = service;
   return app;
