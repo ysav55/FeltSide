@@ -11,6 +11,7 @@ import { buildExportRepo } from './repos/exportRepo.js';
 import { buildScenariosRepo } from './repos/scenariosRepo.js';
 import { buildPlaylistsRepo } from './repos/playlistsRepo.js';
 import { buildSettingsRepo } from './repos/settingsRepo.js';
+import { buildHandReadRepo } from './repos/handReadRepo.js';
 import { TableService } from './tables/TableService.js';
 import { buildAuthRoutes } from './routes/auth.js';
 import { buildPlayersRoutes } from './routes/players.js';
@@ -19,6 +20,7 @@ import { buildTablesRoutes } from './routes/tables.js';
 import { buildScenariosRoutes } from './routes/scenarios.js';
 import { buildPlaylistsRoutes } from './routes/playlists.js';
 import { buildAnalyzerSettingsRoutes } from './routes/analyzerSettings.js';
+import { buildReviewRoutes } from './routes/review.js';
 import { buildExportRoutes } from './routes/export.js';
 import { buildSyncRoutes } from './routes/sync.js';
 
@@ -33,10 +35,11 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
   const scenariosRepo = buildScenariosRepo(db);
   const playlistsRepo = buildPlaylistsRepo(db);
   const settingsRepo = buildSettingsRepo(db);
+  const handReadRepo = buildHandReadRepo(db);
   const { requireAuth, requireCoach } = buildAuthMiddleware({ config, playersRepo });
 
   const service = tableService ?? new TableService({
-    repos: { tablesRepo, bankrollRepo, recordingRepo, playersRepo, scenariosRepo, playlistsRepo },
+    repos: { tablesRepo, bankrollRepo, recordingRepo, playersRepo, scenariosRepo, playlistsRepo, handReadRepo },
     timers: tableTimers,
     cardSourceFactory,
     // Analyzer settings snapshot per completed hand (non-retroactive, §6).
@@ -64,6 +67,9 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
   app.use('/api/scenarios', buildScenariosRoutes({ scenariosRepo, requireAuth, requireCoach }));
   app.use('/api/playlists', buildPlaylistsRoutes({ playlistsRepo, requireAuth, requireCoach }));
   app.use('/api/analyzer-settings', buildAnalyzerSettingsRoutes({ settingsRepo, requireAuth, requireCoach }));
+  app.use('/api/hands', buildReviewRoutes({
+    handReadRepo, recordingRepo, scenariosRepo, requireAuth, requireCoach,
+  }));
 
   // CONTRACT surface — API-key auth, contract error dialect ({ code }).
   app.use('/export/v1', buildExportRoutes({ exportRepo, config }));
@@ -87,7 +93,7 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
 
   app.locals.repos = {
     playersRepo, bankrollRepo, tablesRepo, recordingRepo,
-    scenariosRepo, playlistsRepo, settingsRepo,
+    scenariosRepo, playlistsRepo, settingsRepo, handReadRepo,
   };
   app.locals.tableService = service;
   return app;

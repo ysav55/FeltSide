@@ -153,6 +153,8 @@ export function createCoachedSource(panel, { rng = Math.random, onAwaiting = () 
 
     /** DEALING §1.4 — computed, never declared. */
     origin() {
+      // A branch-to-live hand (M6 §5) carries a distinct provenance.
+      if (panel.originOverride) return panel.originOverride;
       if (panel.fromScenario) return 'scenario';
       if (slotStates.length === 0) return 'rng';
       if (slotStates.includes('partial')) return 'hybrid';

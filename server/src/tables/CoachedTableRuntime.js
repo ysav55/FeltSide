@@ -1,6 +1,7 @@
 import { TableEngine, EngineError } from '../game/TableEngine.js';
 import { createCoachedSource } from '../game/coachedCardSource.js';
 import { analyzeHand } from '../analyzers/index.js';
+import { buildReplay } from '../game/ReplayEngine.js';
 
 /**
  * CoachedTableRuntime — one live coached table (PRD §3.1, DEALING.md).
@@ -48,6 +49,8 @@ export class CoachedTableRuntime {
     this.drill = null;             // { playlistId, name, scenarios, index }
     this.openSeating = false;      // coach override of the soft seat list
     this.connected = new Set();
+    this.groupReview = null;       // { hand, cursor } — group transition (M6 §6)
+    this._branch = null;           // { handId, cursor, seatStacks } — branch (M6 §5)
     this._chain = Promise.resolve();
     this._source = null;
 
@@ -436,6 +439,109 @@ export class CoachedTableRuntime {
     return this.drill;
   }
 
+  // ── Branch-to-live (M6 §5) ───────────────────────────────────────────
+
+  /**
+   * Fork a replay point into live play: present participants keep their
+   * reconstructed stacks-at-cursor and their recorded cards, the board is
+   * pre-staged, and a fresh hand is dealt with origin='replay_branch'.
+   * Bankroll is never involved (coached tables don't touch it). Chips are
+   * conserved within the branch hand by the engine.
+   */
+  async branchFromHand(handDetail, cursor = 0) {
+    // NOT wrapped in _enqueue: the setup is synchronous and this awaits
+    // this.deal(), which enqueues itself — a double-enqueue would deadlock.
+    if (this.closed) throw new EngineError('table_closed');
+    if (this.engine.isHandRunning()) throw new EngineError('hand_in_progress');
+    if (this._branch) throw new EngineError('already_branched');
+
+    const replay = buildReplay(handDetail);
+    const frame = replay.frameAt(cursor);
+    const frameSeat = new Map(frame.seats.map((s) => [s.playerId, s]));
+
+    // Snapshot present stacks so unbranch can restore the replay point.
+    this._branch = {
+      handId: handDetail.handId,
+      cursor: frame.cursor,
+      seatStacks: this.engine.occupiedSeats().map((s) => ({ playerId: s.playerId, stack: s.stack })),
+    };
+
+    const slots = {};
+    for (const seat of this.engine.occupiedSeats()) {
+      const fs = frameSeat.get(seat.playerId);
+      if (!fs) continue;                       // seated player not in the recorded hand
+      seat.stack = fs.stack;                   // reconstructed stack-at-cursor
+      if (!fs.folded && fs.holeCards && fs.holeCards.length === 2) {
+        slots[seat.playerId] = { mode: 'cards', cards: [...fs.holeCards] };
+      }
+    }
+    this.panel = {
+      slots,
+      board: [0, 1, 2, 3, 4].map((i) => handDetail.board[i] ?? null),
+      streetPolicy: { flop: 'manual', turn: 'manual', river: 'manual' },
+      fromScenario: false,
+      originOverride: 'replay_branch',
+    };
+    this.emit('branch', { tableId: this.tableId, handId: handDetail.handId, cursor: frame.cursor });
+    await this.deal();
+    return { branched: true, handId: handDetail.handId, cursor: frame.cursor };
+  }
+
+  /** Discard the branch and return to the replay point (restores stacks). */
+  async unbranchFromHand() {
+    return this._enqueue(async () => {
+      if (!this._branch) throw new EngineError('not_branched');
+      if (this.engine.isHandRunning()) throw new EngineError('hand_in_progress');
+      for (const { playerId, stack } of this._branch.seatStacks) {
+        const seat = this.engine.findSeat(playerId);
+        if (seat) seat.stack = stack;
+      }
+      const at = { handId: this._branch.handId, cursor: this._branch.cursor };
+      this._branch = null;
+      this.panel = EMPTY_PANEL();
+      this.emit('unbranch', { tableId: this.tableId, ...at });
+      this._broadcast();
+      this._coachBroadcast();
+      return { unbranched: true, ...at };
+    });
+  }
+
+  get branched() { return this._branch !== null; }
+
+  // ── Group transition (M6 §6) ─────────────────────────────────────────
+
+  /**
+   * Move every connected player at this table into the same review session
+   * (spectator technical state). Coach-driven navigation is synced to all;
+   * independent per table because it lives on the runtime.
+   */
+  enterGroupReview(handDetail, cursor = 0) {
+    this.groupReview = { hand: handDetail, cursor };
+    this.emit('group_review', { tableId: this.tableId });
+  }
+
+  navGroupReview(cursor) {
+    if (!this.groupReview) throw new EngineError('not_in_review');
+    this.groupReview.cursor = cursor | 0;
+    this.emit('group_review', { tableId: this.tableId });
+  }
+
+  exitGroupReview() {
+    if (!this.groupReview) return;
+    this.groupReview = null;
+    this.emit('group_review', { tableId: this.tableId });
+  }
+
+  groupReviewState() {
+    if (!this.groupReview) return null;
+    return {
+      tableId: this.tableId,
+      handId: this.groupReview.hand.handId,
+      cursor: this.groupReview.cursor,
+      hand: this.groupReview.hand, // open-kimono review payload (all hole cards)
+    };
+  }
+
   // ── Lifecycle & recording ────────────────────────────────────────────
 
   async _activateIfNeeded() {
@@ -543,6 +649,7 @@ export class CoachedTableRuntime {
       awaitingDeal: Boolean(this.awaiting),
       connected: [...this.connected],
       actionDeadline: null,
+      branched: this.branched,
       drill: this.drill
         ? { name: this.drill.name, index: this.drill.index, count: this.drill.scenarios.length }
         : null,
@@ -571,6 +678,9 @@ export class CoachedTableRuntime {
       openSeating: this.openSeating,
       seatList: this.seatList(),
       paused: this.paused,
+      branched: this.branched,
+      inGroupReview: this.groupReview !== null,
+      lastHandId: this.lastHandId,
     };
   }
 

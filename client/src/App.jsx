@@ -5,6 +5,7 @@ import Login from './pages/Login.jsx';
 import Lobby from './pages/Lobby.jsx';
 import TablePage from './pages/TablePage.jsx';
 import ReviewPage from './pages/ReviewPage.jsx';
+import HandHistory from './pages/HandHistory.jsx';
 import AnalyzerSettings from './pages/AnalyzerSettings.jsx';
 
 /** /review/:handId — reserved in M3 (CONTRACT §4.4 review_url), filled in M6. */
@@ -15,6 +16,10 @@ function reviewHandId() {
 
 function isAnalyzerSettingsPath() {
   return /^\/settings\/analyzers\/?$/.test(window.location.pathname);
+}
+
+function isHandHistoryPath() {
+  return /^\/hands\/?$/.test(window.location.pathname);
 }
 
 export default function App() {
@@ -80,6 +85,10 @@ export default function App() {
 
   if (isAnalyzerSettingsPath() && player.role === 'coach') {
     return <AnalyzerSettings player={player} onLogout={handleLogout} />;
+  }
+
+  if (isHandHistoryPath() && player.role === 'coach') {
+    return <HandHistory player={player} onLogout={handleLogout} />;
   }
 
   if (table) {

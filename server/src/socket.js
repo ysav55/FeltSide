@@ -45,6 +45,13 @@ export function attachSockets({ httpServer, config, tableService }) {
             : payload);
         }
       }
+    } else if (event === 'group_review') {
+      // Group transition (M6 §6): the whole room follows the coach into (or
+      // out of) the review. Open-kimono review payload to every connected
+      // player at THIS table only.
+      const runtime = tableService.get(payload.tableId);
+      const state = runtime?.groupReviewState ? runtime.groupReviewState() : null;
+      io.to(room).emit('table:group_review', state);
     } else {
       io.to(room).emit(`table:${event}`, payload);
     }
@@ -117,6 +124,21 @@ export function attachSockets({ httpServer, config, tableService }) {
       'load-playlist': (rt, p) => rt.loadPlaylist(p.playlist_id),
       'next-drill':   (rt) => rt.nextDrill(),
       'state':        (rt) => rt.coachState(),
+      // ── M6 review / branch / group transition ───────────────────────
+      'branch':       async (rt, p) => {
+        const hand = await tableService.repos.handReadRepo.getHandDetail(p.hand_id);
+        if (!hand) throw new Error('hand_not_found');
+        return rt.branchFromHand(hand, p.cursor ?? 0);
+      },
+      'unbranch':     (rt) => rt.unbranchFromHand(),
+      'review:enter': async (rt, p) => {
+        const hand = await tableService.repos.handReadRepo.getHandDetail(p.hand_id);
+        if (!hand) throw new Error('hand_not_found');
+        rt.enterGroupReview(hand, p.cursor ?? 0);
+        return { entered: true };
+      },
+      'review:nav':   (rt, p) => { rt.navGroupReview(p.cursor ?? 0); return { cursor: p.cursor ?? 0 }; },
+      'review:exit':  (rt) => { rt.exitGroupReview(); return { exited: true }; },
     };
 
     socket.on('coach:command', async ({ tableId, command, payload = {} } = {}, cb) => {

@@ -4,6 +4,7 @@ import { getSocket } from '../socket.js';
 import PlayingCard from '../components/PlayingCard.jsx';
 import DealingPanel from '../components/DealingPanel.jsx';
 import CoachControls from '../components/CoachControls.jsx';
+import GroupReviewOverlay from '../components/GroupReviewOverlay.jsx';
 
 const fmt = (n) => Number(n ?? 0).toLocaleString('en-US');
 
@@ -61,6 +62,7 @@ function Seat({ seat, isButton, isToAct, isMe }) {
 export default function TablePage({ player, table: initialTable, onLeft }) {
   const [table, setTable] = useState(initialTable);
   const [coachView, setCoachView] = useState(null);
+  const [groupReview, setGroupReview] = useState(null);
   const [raiseTo, setRaiseTo] = useState('');
   const [error, setError] = useState(null);
   const [rebuyAmount, setRebuyAmount] = useState('');
@@ -75,8 +77,13 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
     socketRef.current = socket;
     const onState = (state) => { if (state.tableId === tableId) setTable(state); };
     const onCoach = (state) => { if (state.tableId === tableId) setCoachView(state); };
+    const onGroupReview = (state) => {
+      // null when the coach exits ("Back to Play"); a payload while reviewing.
+      if (state === null || state.tableId === tableId) setGroupReview(state);
+    };
     socket.on('table:state', onState);
     socket.on('table:coach_state', onCoach);
+    socket.on('table:group_review', onGroupReview);
     const enter = () => {
       // A seated player enters; the coach can also observe unseated.
       socket.emit('table:enter', { tableId }, (res) => {
@@ -160,8 +167,13 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
 
   const busted = mySeat && mySeat.stack === 0 && !mySeat.inHand;
 
+  // Players (and the coach) follow the coach-driven group review (M6 §6).
+  // The coach still sees their controls beneath, to navigate / go back.
+  const showOverlay = groupReview && !isCoach;
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      {showOverlay && <GroupReviewOverlay review={groupReview} />}
       <header className="border-b border-slate-800 px-4 py-2 flex items-center justify-between">
         <div>
           <span className="text-emerald-400 font-semibold">FeltSide</span>
@@ -276,7 +288,10 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
         {isCoach && coached && coachView && (
           <div className="flex flex-col gap-3">
             <DealingPanel table={table} coach={coachView} send={sendCoach} />
-            <CoachControls table={table} coach={coachView} send={sendCoach} onEnded={onLeft} />
+            <CoachControls
+              table={table} coach={coachView} send={sendCoach} onEnded={onLeft}
+              groupReview={groupReview}
+            />
           </div>
         )}
 

@@ -37,7 +37,7 @@ module by name and note the correction in docs/decisions/.
 
 | Old path | Destination |
 |----------|-------------|
-| server/game/ReplayEngine.js | legacy/game/ReplayEngine.js  ⚠ ARCH-05 |
+| ~~server/game/ReplayEngine.js~~ | **REBUILT in M6, not graduated** — the legacy module's architecture *was* ARCH-05 (mutate-by-reference + unbounded deep-copy on branch) and it was welded to the old GameManager state shape. Removed from `legacy/`; replaced by a pure immutable frame model in `server/src/game/ReplayEngine.js`. See docs/decisions/0010. |
 | client/src/components/PokerTable.jsx | legacy/client/PokerTable.jsx |
 | client/src/components/BettingControls.jsx | legacy/client/BettingControls.jsx |
 

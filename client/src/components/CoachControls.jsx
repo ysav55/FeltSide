@@ -5,7 +5,7 @@ import { useState } from 'react';
  * street, award pot, stack adjust, blind change, live tagging, seat-list
  * override, end session. Everything goes through the coach socket channel.
  */
-export default function CoachControls({ table, coach, send, onEnded }) {
+export default function CoachControls({ table, coach, send, onEnded, groupReview = null }) {
   const [error, setError] = useState(null);
   const [tagText, setTagText] = useState(''); const [tagPlayer, setTagPlayer] = useState('');
   const [awardTo, setAwardTo] = useState('');
@@ -55,6 +55,32 @@ export default function CoachControls({ table, coach, send, onEnded }) {
           End session
         </button>
       </div>
+
+      {/* M6 — review the last hand with the whole table, or branch it live */}
+      {coach.lastHandId && (
+        <div className="flex flex-wrap gap-1.5 items-center border-t border-slate-800 pt-2">
+          {groupReview ? (
+            <>
+              <span className="text-xs text-amber-300">Group review · step {groupReview.cursor}</span>
+              <button type="button" className={btn} onClick={() => cmd('review:nav', { hand_id: coach.lastHandId, cursor: Math.max(0, groupReview.cursor - 1) })}>◀</button>
+              <button type="button" className={btn} onClick={() => cmd('review:nav', { hand_id: coach.lastHandId, cursor: groupReview.cursor + 1 })}>▶</button>
+              <button type="button" className={btn} onClick={() => cmd('review:exit')}>Back to play</button>
+            </>
+          ) : (
+            <button type="button" className={btn} onClick={() => cmd('review:enter', { hand_id: coach.lastHandId, cursor: 0 })}>
+              Review last hand (whole table)
+            </button>
+          )}
+          {coach.branched ? (
+            <button type="button" className={btn} onClick={() => cmd('unbranch')}>Unbranch</button>
+          ) : (
+            <button type="button" className={btn} onClick={() => cmd('branch', { hand_id: coach.lastHandId, cursor: 0 })}
+              title="Fork the last hand into live play (origin=replay_branch)">
+              Branch to live
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-2 items-center">
         <select value={awardTo} onChange={(e) => setAwardTo(e.target.value)} className={input} aria-label="award pot to">

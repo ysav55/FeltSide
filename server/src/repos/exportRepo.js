@@ -94,7 +94,7 @@ export function buildExportRepo(db) {
         const { rows: tagRows } = await db.query(
           `select hand_id, tag, tag_type, player_id, action_seq
              from hand_tags
-            where hand_id = any($1)
+            where hand_id = any($1) and not dismissed
             order by hand_id, id`,
           [ids]
         );
