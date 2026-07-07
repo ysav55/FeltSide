@@ -26,7 +26,9 @@
  */
 
 export function computeCounters(record) {
-  const { actions, participants, showdownReached, winners } = record;
+  const { participants, showdownReached, winners } = record;
+  // Undone actions are marked, never erased (M4) — stats ignore them.
+  const actions = record.actions.filter((a) => !a.reverted);
   const preflop = actions.filter((a) => a.street === 'preflop');
   const flop = actions.filter((a) => a.street === 'flop');
   const flopDealt = record.board.length >= 3;

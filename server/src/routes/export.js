@@ -11,7 +11,7 @@ import { TAG_VOCABULARY, TAG_VOCABULARY_VERSION } from '../export/vocabulary.js'
  * JSON numbers, timestamps to UTC ISO-8601 strings.
  */
 
-export const ENGINE_VERSION = '0.3.0'; // M3
+export const ENGINE_VERSION = '0.5.0'; // M4+M5
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
@@ -60,7 +60,7 @@ export function buildExportRoutes({ exportRepo, config }) {
         started_at: iso(s.started_at),
         ended_at: iso(s.ended_at),
         hand_count: Number(s.hand_count),
-        coach_player_id: null, // coached tables arrive in M4
+        coach_player_id: s.coach_player_id ?? null,
         participants: (participantsBySession.get(s.id) ?? []).map((p) => ({
           player_id: p.player_id,
           crm_student_id: p.crm_student_id ?? null,
@@ -77,7 +77,7 @@ export function buildExportRoutes({ exportRepo, config }) {
     try {
       const q = parseCursorQuery(req, res);
       if (!q) return;
-      const { page, hasMore, participantsByHand, actionsByHand } =
+      const { page, hasMore, participantsByHand, actionsByHand, tagsByHand } =
         await exportRepo.pageHands({ afterSeq: q.afterSeq, limit: q.limit });
       res.json(envelope(page, hasMore, (h) => ({
         hand_id: h.id,
@@ -113,15 +113,33 @@ export function buildExportRoutes({ exportRepo, config }) {
           street: a.street,
           action: a.action,
           amount: Number(a.amount),
+          // Additive field (CONTRACT §6): undone actions are marked, kept.
+          reverted: a.reverted === true,
         })),
-        tags: [], // M5 populates; the shape is live now
+        tags: (tagsByHand.get(h.id) ?? []).map((t) => ({
+          tag: t.tag,
+          tag_type: t.tag_type,
+          player_id: t.player_id ?? null,
+          action_seq: t.action_seq === null ? null : Number(t.action_seq),
+        })),
       })));
     } catch (err) { next(err); }
   });
 
-  // §4.6 — playlist catalog snapshot; valid empty catalog until M4.
-  router.get('/playlists', (req, res) => {
-    res.json({ data: [] });
+  // §4.6 — playlist catalog snapshot (real since M4; attach-by-reference).
+  router.get('/playlists', async (req, res, next) => {
+    try {
+      const rows = await exportRepo.listPlaylists();
+      res.json({
+        data: rows.map((p) => ({
+          playlist_id: p.id,
+          name: p.name,
+          description: p.description ?? '',
+          scenario_count: Number(p.scenario_count),
+          updated_at: iso(p.updated_at),
+        })),
+      });
+    } catch (err) { next(err); }
   });
 
   // §4.7 — tournament-preset catalog snapshot; valid empty catalog until M7.

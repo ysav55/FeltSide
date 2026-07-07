@@ -12,6 +12,7 @@ describe('migrations', () => {
       '0003_tables.sql',
       '0004_recording.sql',
       '0005_export_sync.sql',
+      '0006_coached_analyzers.sql',
     ]);
 
     const again = await migrate(db);

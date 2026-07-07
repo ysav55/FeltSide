@@ -53,12 +53,17 @@ export default function Lobby({ player, onLogout, onSeated }) {
           )}
           <span className="text-slate-400">{player.display_name}</span>
           {player.role === 'coach' && (
-            <button
-              onClick={() => setDrawerOpen(true)}
-              className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1.5"
-            >
-              Admin
-            </button>
+            <>
+              <a href="/settings/analyzers" className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1.5">
+                Analyzers
+              </a>
+              <button
+                onClick={() => setDrawerOpen(true)}
+                className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1.5"
+              >
+                Admin
+              </button>
+            </>
           )}
           <button onClick={onLogout} className="text-slate-500 hover:text-slate-300">
             Sign out
@@ -108,9 +113,23 @@ export default function Lobby({ player, onLogout, onSeated }) {
                       <span className="text-slate-400 text-sm">
                         {fmtStart(t.scheduled_start)}
                       </span>
-                      <span className="rounded-md bg-slate-900 border border-slate-800 px-3 py-1 text-sm text-slate-500">
-                        Opens at lesson time
-                      </span>
+                      {player.role === 'coach' && t.mode !== 'tournament' ? (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await api(`/tables/${t.id}/open`, { method: 'POST' });
+                              onSeated(res.table);
+                            } catch { /* stays scheduled */ }
+                          }}
+                          className="rounded-md bg-emerald-700 hover:bg-emerald-600 px-3 py-1 text-sm"
+                        >
+                          Open table
+                        </button>
+                      ) : (
+                        <span className="rounded-md bg-slate-900 border border-slate-800 px-3 py-1 text-sm text-slate-500">
+                          Opens at lesson time
+                        </span>
+                      )}
                     </>
                   ) : (
                     <>
@@ -135,7 +154,11 @@ export default function Lobby({ player, onLogout, onSeated }) {
       </main>
 
       {creating && (
-        <CreateTableDialog onClose={() => setCreating(false)} onSeated={onSeated} />
+        <CreateTableDialog
+          onClose={() => setCreating(false)}
+          onSeated={onSeated}
+          coach={player.role === 'coach'}
+        />
       )}
       {joining && (
         <JoinTableDialog table={joining} onClose={() => setJoining(null)} onSeated={onSeated} />

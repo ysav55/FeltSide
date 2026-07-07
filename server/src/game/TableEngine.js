@@ -47,6 +47,10 @@ export class TableEngine {
     this.positions = {};
     this.handStartStacks = {};
     this.source = null;
+    // M4 coach controls: undo snapshots + marked-not-erased action log.
+    this._snapshots = [];
+    this._streetSnapshots = {};
+    this.undoUsed = false;
   }
 
   // ── Seating ──────────────────────────────────────────────────────────
@@ -216,6 +220,16 @@ export class TableEngine {
       throw new EngineError('not_your_turn');
     }
 
+    this._snapshots.push(this._takeSnapshot());
+    try {
+      await this._applyAction(seat, { type, amount });
+    } catch (err) {
+      this._snapshots.pop();
+      throw err;
+    }
+  }
+
+  async _applyAction(seat, { type, amount = 0 }) {
     switch (type) {
       case 'fold':
         this._fold(seat);
@@ -280,6 +294,141 @@ export class TableEngine {
     await this._afterAction(seat);
   }
 
+  // ── Coach controls (M4) ──────────────────────────────────────────────
+
+  /**
+   * Full engine-state snapshot for undo/rollback. Hole cards are included
+   * (a rollback across a street re-deal must not leak re-draws) and chips
+   * are captured per seat so conservation holds by construction.
+   */
+  _takeSnapshot() {
+    return {
+      phase: this.phase,
+      board: [...this.board],
+      seq: this.seq,
+      currentBet: this.currentBet,
+      minRaiseSize: this.minRaiseSize,
+      toAct: this.toAct,
+      seats: this.seats.map((s) => s && {
+        playerId: s.playerId,
+        stack: s.stack, betThisRound: s.betThisRound, contributed: s.contributed,
+        folded: s.folded, allIn: s.allIn, acted: s.acted, inHand: s.inHand,
+        leaving: s.leaving ?? false,
+        holeCards: s.holeCards ? [...s.holeCards] : null,
+      }),
+    };
+  }
+
+  _restoreSnapshot(snap) {
+    // Actions after the snapshot are MARKED reverted, never erased.
+    for (const a of this.actions) {
+      if (a.seq > snap.seq) a.reverted = true;
+    }
+    // Cards dealt after the snapshot go back to the source's pool.
+    const removed = this.board.slice(snap.board.length);
+    if (removed.length && this.source?.release) this.source.release(removed);
+    this.phase = snap.phase;
+    this.board = [...snap.board];
+    this.currentBet = snap.currentBet;
+    this.minRaiseSize = snap.minRaiseSize;
+    this.toAct = snap.toAct;
+    for (let i = 0; i < this.seats.length; i++) {
+      const s = this.seats[i];
+      const ss = snap.seats[i];
+      if (!s || !ss || s.playerId !== ss.playerId) continue;
+      Object.assign(s, {
+        stack: ss.stack, betThisRound: ss.betThisRound, contributed: ss.contributed,
+        folded: ss.folded, allIn: ss.allIn, acted: ss.acted, inHand: ss.inHand,
+        leaving: ss.leaving,
+        holeCards: ss.holeCards ? [...ss.holeCards] : null,
+      });
+    }
+    this.undoUsed = true;
+  }
+
+  /** Undo the last voluntary action (blinds are the floor). */
+  undoLastAction() {
+    if (!this.isHandRunning()) throw new EngineError('no_hand');
+    const snap = this._snapshots.pop();
+    if (!snap) throw new EngineError('nothing_to_undo');
+    this._restoreSnapshot(snap);
+    this.listener({ type: 'undo', seq: this.seq });
+  }
+
+  /**
+   * Roll the current street back to just before its cards were dealt and
+   * re-deal it (the source may present different cards / enter awaiting).
+   * Betting on the rolled-back street is marked reverted.
+   */
+  async rollbackStreet() {
+    if (!this.isHandRunning()) throw new EngineError('no_hand');
+    const snap = this._streetSnapshots[this.phase];
+    if (!snap) throw new EngineError('no_street_to_rollback'); // preflop
+    // Drop per-action snapshots taken since the street started.
+    this._snapshots = this._snapshots.filter((s) => s.seq <= snap.seq);
+    const street = this.phase;
+    this._restoreSnapshot(snap);
+    delete this._streetSnapshots[street];
+    this.listener({ type: 'street_rollback', street });
+    // Re-deal the street through the source (may await the coach).
+    return this._dealStreet(street);
+  }
+
+  /**
+   * Force the current betting round to close. Chip-safe: every live player
+   * still owing chips is auto-checked only when nothing is owed; if any bet
+   * is unmatched the control is rejected (folding players by fiat would be
+   * destructive).
+   */
+  async forceStreet() {
+    if (!this.isHandRunning() || this.phase === 'showdown') throw new EngineError('no_hand');
+    const owing = this._livePlayers().filter(
+      (s) => !s.allIn && s.betThisRound < this.currentBet
+    );
+    if (owing.length > 0) throw new EngineError('bets_unmatched');
+    for (const s of this._livePlayers()) s.acted = true;
+    return this._maybeFinishStreet(
+      this._livePlayers().filter((s) => !s.allIn).length <= 1
+    );
+  }
+
+  /** Coach ends the hand, awarding the whole pot to one player. */
+  awardPot(playerId) {
+    if (!this.isHandRunning()) throw new EngineError('no_hand');
+    const winner = this.findSeat(playerId);
+    if (!winner || !winner.inHand || winner.folded) throw new EngineError('invalid_winner');
+    const pot = this._playersInHand().reduce((sum, s) => sum + s.contributed, 0);
+    winner.stack += pot;
+    this._completeHand({
+      pot, winners: [winner.playerId], showdownReached: false, showdown: null,
+    });
+  }
+
+  /** Coach-set stack (coached tables); between hands only. */
+  setStack(playerId, stack) {
+    if (this.isHandRunning()) throw new EngineError('hand_in_progress');
+    if (!Number.isInteger(stack) || stack < 0) throw new EngineError('invalid_stack');
+    const seat = this.findSeat(playerId);
+    if (!seat) throw new EngineError('not_seated');
+    seat.stack = stack;
+  }
+
+  /** Blind change between hands. */
+  setBlinds(smallBlind, bigBlind) {
+    if (this.isHandRunning()) throw new EngineError('hand_in_progress');
+    if (!Number.isInteger(smallBlind) || smallBlind < 1) throw new EngineError('invalid_blinds');
+    if (!Number.isInteger(bigBlind) || bigBlind < smallBlind) throw new EngineError('invalid_blinds');
+    this.config.smallBlind = smallBlind;
+    this.config.bigBlind = bigBlind;
+  }
+
+  /** Total chips on the table — conservation assertions after coach controls. */
+  totalChips() {
+    return this.occupiedSeats().reduce(
+      (sum, s) => sum + s.stack + s.contributed, 0
+    );
+  }
+
   // ── Internals ────────────────────────────────────────────────────────
 
   _seatAt(idx) { return this.seats[idx]; }
@@ -323,6 +472,7 @@ export class TableEngine {
     this.actions.push({
       seq: this.seq, playerId: seat.playerId,
       street: this.phase, action, amount,
+      allIn: seat.allIn, reverted: false,
     });
     this.listener({ type: 'action', seq: this.seq, playerId: seat.playerId, action, amount });
   }
@@ -380,10 +530,20 @@ export class TableEngine {
     if (this.phase === 'river') return this._showdown();
 
     const next = STREETS[idx + 1];
-    this.phase = next;
-    const cards = await this.source.street(next, BOARD_CARDS[next]);
+    return this._dealStreet(next, { runOut });
+  }
+
+  /**
+   * Deal one street through the source (which may await the coach —
+   * DEALING §3) and open its betting round. Also the re-entry point for
+   * street rollback: the pre-deal snapshot lets the coach re-choose cards.
+   */
+  async _dealStreet(street, { runOut = false } = {}) {
+    this.phase = street;
+    this._streetSnapshots[street] = this._takeSnapshot();
+    const cards = await this.source.street(street, BOARD_CARDS[street]);
     this.board.push(...cards);
-    this.listener({ type: 'street', street: next, board: [...this.board] });
+    this.listener({ type: 'street', street, board: [...this.board] });
 
     const actors = this._livePlayers().filter((s) => !s.allIn);
     if (runOut || actors.length <= 1) {
@@ -460,7 +620,9 @@ export class TableEngine {
     }));
     const record = {
       handNo: this.handNo,
-      origin: 'rng', // M2: RNG dealer only; the enum stays full in the DB
+      // The source knows how its cards came to be (DEALING §1.4); the RNG
+      // source has no origin() and defaults.
+      origin: this.source?.origin?.() ?? 'rng',
       board: [...this.board],
       pot,
       actions: [...this.actions],
@@ -468,6 +630,7 @@ export class TableEngine {
       winners,
       showdownReached,
       showdown,
+      undoUsed: this.undoUsed,
     };
     // Pot is fully awarded — clear per-hand chip commitments.
     for (const s of this._playersInHand()) {

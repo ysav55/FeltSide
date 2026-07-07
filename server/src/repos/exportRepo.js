@@ -21,8 +21,8 @@ export function buildExportRepo(db) {
     /** §4.3 — one page of completed sessions after `afterSeq`. */
     async pageSessions({ afterSeq, limit }) {
       const { rows: sessions } = await db.query(
-        `select id, table_mode, crm_entry_id, started_at, ended_at,
-                hand_count, export_seq
+        `select id, table_mode, crm_entry_id, coach_player_id, started_at,
+                ended_at, hand_count, export_seq
            from sessions
           where export_seq is not null and export_seq > $1
           order by export_seq
@@ -69,6 +69,7 @@ export function buildExportRepo(db) {
 
       let participantsByHand = new Map();
       let actionsByHand = new Map();
+      let tagsByHand = new Map();
       if (page.length > 0) {
         const ids = page.map((h) => h.id);
         const { rows: participants } = await db.query(
@@ -82,15 +83,36 @@ export function buildExportRepo(db) {
         participantsByHand = groupBy(participants, (r) => r.hand_id);
 
         const { rows: actions } = await db.query(
-          `select hand_id, seq, player_id, street, action, amount
+          `select hand_id, seq, player_id, street, action, amount, reverted
              from hand_actions
             where hand_id = any($1)
             order by hand_id, seq`,
           [ids]
         );
         actionsByHand = groupBy(actions, (r) => r.hand_id);
+
+        const { rows: tagRows } = await db.query(
+          `select hand_id, tag, tag_type, player_id, action_seq
+             from hand_tags
+            where hand_id = any($1)
+            order by hand_id, id`,
+          [ids]
+        );
+        tagsByHand = groupBy(tagRows, (r) => r.hand_id);
       }
-      return { page, hasMore, participantsByHand, actionsByHand };
+      return { page, hasMore, participantsByHand, actionsByHand, tagsByHand };
+    },
+
+    /** §4.6 — playlist catalog snapshot (real since M4). */
+    async listPlaylists() {
+      const { rows } = await db.query(
+        `select p.id, p.name, p.description, p.updated_at,
+                (select count(*)::int from playlist_scenarios ps
+                  where ps.playlist_id = p.id) as scenario_count
+           from playlists p
+          order by p.created_at`
+      );
+      return rows;
     },
   };
 }

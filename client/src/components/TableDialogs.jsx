@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { api } from '../api.js';
 
-export function CreateTableDialog({ onClose, onSeated }) {
+export function CreateTableDialog({ onClose, onSeated, coach = false }) {
   const [smallBlind, setSmallBlind] = useState('50');
   const [bigBlind, setBigBlind] = useState('100');
   const [size, setSize] = useState(6);
   const [name, setName] = useState('');
   const [buyIn, setBuyIn] = useState('');
+  const [mode, setMode] = useState('uncoached_cash');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -22,9 +23,15 @@ export function CreateTableDialog({ onClose, onSeated }) {
           big_blind: Number(bigBlind),
           table_size: size,
           name: name || undefined,
+          ...(coach && mode === 'coached_cash' ? { mode } : {}),
         },
       });
       const tableId = created.table.tableId;
+      if (coach && mode === 'coached_cash') {
+        // Coach lands on the coached table as its operator (observing).
+        onSeated(created.table);
+        return;
+      }
       const amount = buyIn ? Number(buyIn) : created.buy_in.defaultAmount;
       const joined = await api(`/tables/${tableId}/join`, {
         method: 'POST', body: { buy_in: amount },
@@ -44,6 +51,16 @@ export function CreateTableDialog({ onClose, onSeated }) {
   return (
     <Dialog title="Create table" onClose={onClose}>
       <form onSubmit={submit} className="space-y-3">
+        {coach && (
+          <div className="flex rounded-md overflow-hidden border border-slate-700 text-sm">
+            {[['uncoached_cash', 'Cash game'], ['coached_cash', 'Coached table']].map(([m, label]) => (
+              <button type="button" key={m} onClick={() => setMode(m)}
+                className={`flex-1 py-2 ${mode === m ? 'bg-emerald-700' : 'bg-slate-800'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2">
           <label className="flex-1 text-sm">
             <span className="text-slate-400">Small blind</span>

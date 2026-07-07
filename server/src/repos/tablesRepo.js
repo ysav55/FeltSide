@@ -93,6 +93,13 @@ export function buildTablesRepo(db) {
       return rows[0] || null;
     },
 
+    async updateConfig(id, config) {
+      await db.query(
+        `update tables set config = $2, updated_at = now() where id = $1`,
+        [id, JSON.stringify(config)]
+      );
+    },
+
     /** RUNTIME §1: seat/stack snapshot after every completed hand. */
     async saveSeats(id, seats) {
       await db.query(

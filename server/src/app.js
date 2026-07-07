@@ -8,11 +8,17 @@ import { buildBankrollRepo } from './repos/bankrollRepo.js';
 import { buildTablesRepo } from './repos/tablesRepo.js';
 import { buildRecordingRepo } from './repos/recordingRepo.js';
 import { buildExportRepo } from './repos/exportRepo.js';
+import { buildScenariosRepo } from './repos/scenariosRepo.js';
+import { buildPlaylistsRepo } from './repos/playlistsRepo.js';
+import { buildSettingsRepo } from './repos/settingsRepo.js';
 import { TableService } from './tables/TableService.js';
 import { buildAuthRoutes } from './routes/auth.js';
 import { buildPlayersRoutes } from './routes/players.js';
 import { buildBankrollRoutes } from './routes/bankroll.js';
 import { buildTablesRoutes } from './routes/tables.js';
+import { buildScenariosRoutes } from './routes/scenarios.js';
+import { buildPlaylistsRoutes } from './routes/playlists.js';
+import { buildAnalyzerSettingsRoutes } from './routes/analyzerSettings.js';
 import { buildExportRoutes } from './routes/export.js';
 import { buildSyncRoutes } from './routes/sync.js';
 
@@ -24,12 +30,17 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
   const tablesRepo = buildTablesRepo(db);
   const recordingRepo = buildRecordingRepo(db);
   const exportRepo = buildExportRepo(db);
+  const scenariosRepo = buildScenariosRepo(db);
+  const playlistsRepo = buildPlaylistsRepo(db);
+  const settingsRepo = buildSettingsRepo(db);
   const { requireAuth, requireCoach } = buildAuthMiddleware({ config, playersRepo });
 
   const service = tableService ?? new TableService({
-    repos: { tablesRepo, bankrollRepo, recordingRepo, playersRepo },
+    repos: { tablesRepo, bankrollRepo, recordingRepo, playersRepo, scenariosRepo, playlistsRepo },
     timers: tableTimers,
     cardSourceFactory,
+    // Analyzer settings snapshot per completed hand (non-retroactive, §6).
+    settingsProvider: () => settingsRepo.get('analyzer'),
   });
 
   const app = express();
@@ -50,6 +61,9 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
   app.use('/api/players', buildPlayersRoutes({ playersRepo, bankrollRepo, requireAuth, requireCoach }));
   app.use('/api/bankroll', buildBankrollRoutes({ playersRepo, bankrollRepo, requireAuth, requireCoach }));
   app.use('/api/tables', buildTablesRoutes({ tablesRepo, tableService: service, requireAuth }));
+  app.use('/api/scenarios', buildScenariosRoutes({ scenariosRepo, requireAuth, requireCoach }));
+  app.use('/api/playlists', buildPlaylistsRoutes({ playlistsRepo, requireAuth, requireCoach }));
+  app.use('/api/analyzer-settings', buildAnalyzerSettingsRoutes({ settingsRepo, requireAuth, requireCoach }));
 
   // CONTRACT surface — API-key auth, contract error dialect ({ code }).
   app.use('/export/v1', buildExportRoutes({ exportRepo, config }));
@@ -71,7 +85,10 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
     res.status(500).json({ error: 'internal_error' });
   });
 
-  app.locals.repos = { playersRepo, bankrollRepo, tablesRepo, recordingRepo };
+  app.locals.repos = {
+    playersRepo, bankrollRepo, tablesRepo, recordingRepo,
+    scenariosRepo, playlistsRepo, settingsRepo,
+  };
   app.locals.tableService = service;
   return app;
 }

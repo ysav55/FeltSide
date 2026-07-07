@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { getSocket } from '../socket.js';
 import PlayingCard from '../components/PlayingCard.jsx';
+import DealingPanel from '../components/DealingPanel.jsx';
+import CoachControls from '../components/CoachControls.jsx';
 
 const fmt = (n) => Number(n ?? 0).toLocaleString('en-US');
 
@@ -58,27 +60,54 @@ function Seat({ seat, isButton, isToAct, isMe }) {
 
 export default function TablePage({ player, table: initialTable, onLeft }) {
   const [table, setTable] = useState(initialTable);
+  const [coachView, setCoachView] = useState(null);
   const [raiseTo, setRaiseTo] = useState('');
   const [error, setError] = useState(null);
   const [rebuyAmount, setRebuyAmount] = useState('');
   const socketRef = useRef(null);
 
   const tableId = initialTable.tableId;
+  const isCoach = player.role === 'coach';
+  const coached = table.mode === 'coached_cash';
 
   useEffect(() => {
     const socket = getSocket();
     socketRef.current = socket;
     const onState = (state) => { if (state.tableId === tableId) setTable(state); };
+    const onCoach = (state) => { if (state.tableId === tableId) setCoachView(state); };
     socket.on('table:state', onState);
-    const enter = () => socket.emit('table:enter', { tableId }, (res) => {
-      if (res?.table) setTable(res.table);
-    });
+    socket.on('table:coach_state', onCoach);
+    const enter = () => {
+      // A seated player enters; the coach can also observe unseated.
+      socket.emit('table:enter', { tableId }, (res) => {
+        if (res?.table) return setTable(res.table);
+        if (isCoach) {
+          socket.emit('table:observe', { tableId }, (obs) => {
+            if (obs?.table) setTable(obs.table);
+            if (obs?.coach) setCoachView(obs.coach);
+          });
+        }
+      });
+      if (isCoach) {
+        socket.emit('coach:command', { tableId, command: 'state' }, (res) => {
+          if (res?.coach) setCoachView(res.coach);
+        });
+      }
+    };
     if (socket.connected) enter();
     socket.on('connect', enter);
     return () => {
       socket.off('table:state', onState);
+      socket.off('table:coach_state', onCoach);
       socket.off('connect', enter);
     };
+  }, [tableId, isCoach]);
+
+  const sendCoach = useCallback((command, payload = {}, cb) => {
+    socketRef.current?.emit('coach:command', { tableId, command, payload }, (res) => {
+      if (res?.coach) setCoachView(res.coach);
+      cb?.(res);
+    });
   }, [tableId]);
 
   const mySeat = table.seats?.find((s) => s && s.playerId === player.id) || null;
@@ -142,18 +171,37 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
         </div>
         <div className="flex items-center gap-3 text-sm">
           <ActionTimer deadline={myTurn ? table.actionDeadline : null} />
-          {mySeat && (
+          {mySeat && !coached && (
             <button onClick={toggleSitOut} className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1">
               {mySeat.sittingOut ? 'Sit in' : 'Sit out'}
             </button>
           )}
-          <button onClick={leave} className="rounded-md bg-rose-900/60 hover:bg-rose-900 px-3 py-1">
-            Leave table
-          </button>
+          {mySeat && (
+            <button onClick={leave} className="rounded-md bg-rose-900/60 hover:bg-rose-900 px-3 py-1">
+              Leave table
+            </button>
+          )}
+          {!mySeat && isCoach && (
+            <button onClick={onLeft} className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1">
+              Back to lobby
+            </button>
+          )}
         </div>
       </header>
 
-      <main className="flex-1 max-w-4xl w-full mx-auto p-4 flex flex-col gap-4">
+      <main className="flex-1 max-w-5xl w-full mx-auto p-4 flex flex-col gap-4">
+        {/* Coached-table status banners (neutral for players — DEALING §3/§6) */}
+        {table.paused && (
+          <div className="rounded-lg border border-sky-800 bg-sky-950/40 px-4 py-2 text-sky-200 text-sm">
+            Game paused by the coach.
+          </div>
+        )}
+        {table.awaitingDeal && (
+          <div className="rounded-lg border border-amber-800 bg-amber-950/40 px-4 py-2 text-amber-200 text-sm">
+            The dealer is acting…
+          </div>
+        )}
+
         {/* Board + pot */}
         <div className="rounded-2xl border border-emerald-900 bg-emerald-950/40 p-6 flex flex-col items-center gap-3">
           <div className="flex gap-2 min-h-16 items-center">
@@ -224,8 +272,16 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
           </div>
         )}
 
-        {/* Bust → re-entry */}
-        {busted && (
+        {/* Coach sidebar — panel + controls (coached tables only) */}
+        {isCoach && coached && coachView && (
+          <div className="flex flex-col gap-3">
+            <DealingPanel table={table} coach={coachView} send={sendCoach} />
+            <CoachControls table={table} coach={coachView} send={sendCoach} onEnded={onLeft} />
+          </div>
+        )}
+
+        {/* Bust → re-entry (uncoached bankroll flow only) */}
+        {busted && !coached && (
           <div className="rounded-xl border border-amber-700 bg-amber-950/30 p-4 flex items-center gap-3">
             <span className="text-amber-200 text-sm">You busted. Re-enter with a new buy-in?</span>
             <input

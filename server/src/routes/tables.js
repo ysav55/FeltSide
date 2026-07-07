@@ -37,11 +37,19 @@ export function buildTablesRoutes({ tablesRepo, tableService, requireAuth }) {
 
   router.post('/', requireAuth(), async (req, res, next) => {
     try {
-      const { small_blind: sb, big_blind: bb, table_size: size, name } = req.body || {};
+      const { small_blind: sb, big_blind: bb, table_size: size, name, mode } = req.body || {};
+      const cleanName = typeof name === 'string' && name.trim() ? name.trim().slice(0, 60) : null;
+      if (mode === 'coached_cash') {
+        if (req.player.role !== 'coach') return res.status(403).json({ error: 'coach_only' });
+        const runtime = await tableService.createCoachedTable({
+          coach: req.player, smallBlind: sb, bigBlind: bb, tableSize: size, name: cleanName,
+          defaultStack: Number.isInteger(req.body?.default_stack) ? req.body.default_stack : null,
+        });
+        return res.status(201).json({ table: runtime.publicState(req.player.id) });
+      }
       const runtime = await tableService.createTable({
         creator: req.player,
-        smallBlind: sb, bigBlind: bb, tableSize: size,
-        name: typeof name === 'string' && name.trim() ? name.trim().slice(0, 60) : null,
+        smallBlind: sb, bigBlind: bb, tableSize: size, name: cleanName,
       });
       res.status(201).json({
         table: runtime.publicState(req.player.id),
@@ -53,12 +61,38 @@ export function buildTablesRoutes({ tablesRepo, tableService, requireAuth }) {
     }
   });
 
+  // A lesson-synced scheduled table becomes joinable (M4 §1; coach-only).
+  router.post('/:id/open', requireAuth(), async (req, res, next) => {
+    try {
+      if (req.player.role !== 'coach') return res.status(403).json({ error: 'coach_only' });
+      const runtime = await tableService.openScheduled(req.params.id, req.player);
+      res.json({ table: runtime.publicState(req.player.id) });
+    } catch (err) {
+      if (engineErrorToHttp(err, res)) return;
+      next(err);
+    }
+  });
+
+  // Coach ends the session — closes and exports it (RUNTIME §3).
+  router.post('/:id/close', requireAuth(), async (req, res, next) => {
+    try {
+      if (req.player.role !== 'coach') return res.status(403).json({ error: 'coach_only' });
+      const runtime = tableService.get(req.params.id);
+      if (!runtime) return res.status(404).json({ error: 'not_found' });
+      await tableService.closeTable(req.params.id, 'ended_by_coach');
+      res.json({ closed: true });
+    } catch (err) {
+      if (engineErrorToHttp(err, res)) return;
+      next(err);
+    }
+  });
+
   router.get('/:id', requireAuth(), (req, res) => {
     const runtime = tableService.get(req.params.id);
     if (!runtime || runtime.closed) return res.status(404).json({ error: 'not_found' });
     res.json({
       table: runtime.publicState(req.player.id),
-      buy_in: runtime.buyInBounds(),
+      ...(runtime.buyInBounds ? { buy_in: runtime.buyInBounds() } : {}),
     });
   });
 

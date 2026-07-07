@@ -16,6 +16,7 @@ export function attachSockets({ httpServer, config, tableService }) {
     try {
       const payload = verifyToken(socket.handshake.auth?.token, config);
       socket.playerId = payload.sub;
+      socket.role = payload.role;
       next();
     } catch {
       next(new Error('unauthenticated'));
@@ -31,6 +32,17 @@ export function attachSockets({ httpServer, config, tableService }) {
         if (socket.rooms.has(room)) {
           const runtime = tableService.get(payload.tableId);
           if (runtime) socket.emit('table:state', runtime.publicState(socket.playerId));
+        }
+      }
+    } else if (event === 'coach_state' || event === 'coach_awaiting_deal') {
+      // Coach-only payloads (dealing panel, assigned cards) — the
+      // visibility rule is enforced HERE, per socket role, server-side.
+      const runtime = tableService.get(payload.tableId);
+      for (const [, socket] of io.of('/').sockets) {
+        if (socket.rooms.has(room) && socket.role === 'coach' && runtime?.coachState) {
+          socket.emit(`table:${event}`, event === 'coach_state'
+            ? runtime.coachState()
+            : payload);
         }
       }
     } else {
@@ -75,6 +87,65 @@ export function attachSockets({ httpServer, config, tableService }) {
       } catch (err) {
         cb?.({ error: err.code || 'sitout_failed' });
       }
+    });
+
+    // ── Coach commands (M4) — role-gated server-side ────────────────────
+    // One handler per command keeps the guard in exactly one place.
+    const coachCommands = {
+      'panel:hole':   (rt, p) => rt.setHoleSlot(p.player_id, p.slot ?? null),
+      'panel:board':  (rt, p) => rt.setBoardSlot(p.index, p.card ?? null),
+      'panel:policy': (rt, p) => rt.setStreetPolicy(p.street, p.policy),
+      'deal':         (rt) => rt.deal(),
+      'redeal':       (rt) => rt.redeal(),
+      'provide':      (rt, p) => rt.provideStreet(p.cards ?? null),
+      'rng-rest':     (rt) => rt.rngRest(),
+      'pause':        (rt, p) => rt.pause(Boolean(p.paused)),
+      'undo':         (rt) => rt.undo(),
+      'rollback':     (rt) => rt.rollbackStreet(),
+      'force-street': (rt) => rt.forceStreet(),
+      'award-pot':    (rt, p) => rt.awardPot(p.player_id),
+      'stack':        (rt, p) => rt.setStack(p.player_id, p.stack),
+      'blinds':       (rt, p) => rt.setBlinds(p.small_blind, p.big_blind),
+      'tag':          (rt, p) => rt.coachTag({
+        tag: p.tag, playerId: p.player_id ?? null, actionSeq: p.action_seq ?? null,
+      }),
+      'open-seating': (rt, p) => rt.setOpenSeating(Boolean(p.open)),
+      'save-scenario': (rt, p, sock) => rt.saveScenario({
+        name: String(p.name ?? '').trim().slice(0, 120) || 'Untitled',
+        description: p.description ?? null, createdBy: sock.playerId,
+      }),
+      'load-playlist': (rt, p) => rt.loadPlaylist(p.playlist_id),
+      'next-drill':   (rt) => rt.nextDrill(),
+      'state':        (rt) => rt.coachState(),
+    };
+
+    socket.on('coach:command', async ({ tableId, command, payload = {} } = {}, cb) => {
+      if (socket.role !== 'coach') return cb?.({ error: 'coach_only' });
+      const runtime = tableService.get(tableId);
+      if (!runtime || runtime.closed) return cb?.({ error: 'not_found' });
+      if (!runtime.coachState) return cb?.({ error: 'not_coached' });
+      const handler = coachCommands[command];
+      if (!handler) return cb?.({ error: 'unknown_command' });
+      try {
+        const result = await handler(runtime, payload, socket);
+        cb?.({ ok: true, result: result ?? null, coach: runtime.coachState() });
+      } catch (err) {
+        cb?.({ error: err.code || err.message || 'command_failed' });
+      }
+    });
+
+    // Coach may enter any table room as an observer (spectate is a state,
+    // not a role — PRD §2).
+    socket.on('table:observe', ({ tableId } = {}, cb) => {
+      if (socket.role !== 'coach') return cb?.({ error: 'coach_only' });
+      const runtime = tableService.get(tableId);
+      if (!runtime || runtime.closed) return cb?.({ error: 'not_found' });
+      socket.join(`table:${tableId}`);
+      socket.tableId = tableId;
+      cb?.({
+        table: runtime.publicState(socket.playerId),
+        ...(runtime.coachState ? { coach: runtime.coachState() } : {}),
+      });
     });
 
     socket.on('disconnect', () => {

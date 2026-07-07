@@ -10,11 +10,11 @@ const EXPORT_SEQ_LOCK = 815001;
 
 export function buildRecordingRepo(db) {
   return {
-    async openSession({ tableId, tableMode, crmEntryId = null }) {
+    async openSession({ tableId, tableMode, crmEntryId = null, coachPlayerId = null }) {
       const { rows } = await db.query(
-        `insert into sessions (table_id, table_mode, crm_entry_id)
-         values ($1, $2, $3) returning *`,
-        [tableId, tableMode, crmEntryId]
+        `insert into sessions (table_id, table_mode, crm_entry_id, coach_player_id)
+         values ($1, $2, $3, $4) returning *`,
+        [tableId, tableMode, crmEntryId, coachPlayerId]
       );
       return rows[0];
     },
@@ -73,11 +73,22 @@ export function buildRecordingRepo(db) {
       return rows[0] || null;
     },
 
+    /** Tags for an already-recorded hand (live coach tagging after completion). */
+    async addHandTags(handId, tags) {
+      for (const t of tags) {
+        await db.query(
+          `insert into hand_tags (hand_id, tag, tag_type, player_id, action_seq)
+           values ($1, $2, $3, $4, $5)`,
+          [handId, t.tag, t.tag_type, t.player_id ?? null, t.action_seq ?? null]
+        );
+      }
+    },
+
     /**
-     * Writes a completed hand (hands + participants + actions) in one DB
-     * transaction. Voided hands never reach this function.
+     * Writes a completed hand (hands + participants + actions + tags) in
+     * one DB transaction. Voided hands never reach this function.
      */
-    async recordHand(sessionId, record) {
+    async recordHand(sessionId, record, tags = []) {
       const counters = computeCounters(record);
       await db.query('begin');
       try {
@@ -106,9 +117,17 @@ export function buildRecordingRepo(db) {
 
         for (const a of record.actions) {
           await db.query(
-            `insert into hand_actions (hand_id, seq, player_id, street, action, amount)
-             values ($1, $2, $3, $4, $5, $6)`,
-            [handId, a.seq, a.playerId, a.street, a.action, a.amount]
+            `insert into hand_actions (hand_id, seq, player_id, street, action, amount, reverted)
+             values ($1, $2, $3, $4, $5, $6, $7)`,
+            [handId, a.seq, a.playerId, a.street, a.action, a.amount, a.reverted ?? false]
+          );
+        }
+
+        for (const t of tags) {
+          await db.query(
+            `insert into hand_tags (hand_id, tag, tag_type, player_id, action_seq)
+             values ($1, $2, $3, $4, $5)`,
+            [handId, t.tag, t.tag_type, t.player_id ?? null, t.action_seq ?? null]
           );
         }
 

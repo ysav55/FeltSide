@@ -193,7 +193,7 @@ describe('CONTRACT §4.3 — sessions', () => {
 });
 
 describe('CONTRACT §4.4 — hands', () => {
-  it('exports the exact hand payload: booleans, actions, review_url, tags []', async () => {
+  it('exports the exact hand payload: booleans, actions, review_url, live tags', async () => {
     const { app, players } = await playedFixture({ hands: 2 });
     const res = await authed(app, '/export/v1/hands');
     expect(res.status).toBe(200);
@@ -209,7 +209,14 @@ describe('CONTRACT §4.4 — hands', () => {
       expect(h.review_url).toBe(`https://engine.test/review/${h.hand_id}`);
       expect(h.board).toHaveLength(5);
       expect(typeof h.pot).toBe('number');
-      expect(h.tags).toEqual([]);
+      // Since M5 tags are live: every tag is contract-shaped; a checked-down
+      // heads-up hand always carries the LIMPED_POT descriptor.
+      expect(Array.isArray(h.tags)).toBe(true);
+      for (const t of h.tags) {
+        expect(Object.keys(t).sort()).toEqual(['action_seq', 'player_id', 'tag', 'tag_type']);
+        expect(['descriptor', 'mistake', 'coach']).toContain(t.tag_type);
+      }
+      expect(h.tags.some((t) => t.tag === 'LIMPED_POT' && t.tag_type === 'descriptor')).toBe(true);
       expect(new Date(h.played_at).toISOString()).toBe(h.played_at);
 
       expect(h.participants).toHaveLength(2);
@@ -238,10 +245,11 @@ describe('CONTRACT §4.4 — hands', () => {
       );
       for (const a of h.actions) {
         expect(Object.keys(a).sort()).toEqual(
-          ['action', 'amount', 'player_id', 'seq', 'street']
+          ['action', 'amount', 'player_id', 'reverted', 'seq', 'street']
         );
         expect(['preflop', 'flop', 'turn', 'river']).toContain(a.street);
         expect(typeof a.amount).toBe('number');
+        expect(a.reverted).toBe(false);
       }
       // Checked-down hands reach showdown: both saw the flop and showdown.
       expect(h.participants.every((p) => p.saw_flop && p.wtsd)).toBe(true);

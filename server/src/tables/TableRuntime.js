@@ -1,5 +1,6 @@
 import { TableEngine, EngineError } from '../game/TableEngine.js';
 import { rngCardSourceFactory } from '../game/cardSource.js';
+import { analyzeHand } from '../analyzers/index.js';
 
 /**
  * TableRuntime — everything around the pure engine for one uncoached cash
@@ -20,7 +21,9 @@ export class TableRuntime {
   constructor({
     tableRow, repos, emit = () => {}, timers = {},
     cardSourceFactory = rngCardSourceFactory(),
+    settingsProvider = null,
   }) {
+    this.settingsProvider = settingsProvider;
     this.tableId = tableRow.id;
     this.config = tableRow.config; // { smallBlind, bigBlind, tableSize, name }
     this.status = tableRow.status;
@@ -230,6 +233,8 @@ export class TableRuntime {
       this._enqueue(async () => {
         if (this.closed || !this.engine.canStartHand()) return;
         await this._activateIfNeeded();
+        // §6 non-retroactivity: analyzer settings snapshot at hand start.
+        this._handSettings = this.settingsProvider ? await this.settingsProvider() : undefined;
         await this.engine.startHand();
         this._broadcast();
       }).catch(() => {});
@@ -266,7 +271,10 @@ export class TableRuntime {
   async _afterHand(record) {
     // RUNTIME §1: stacks persist after every completed hand; then record.
     await this._persistSeats();
-    await this.repos.recordingRepo.recordHand(this.sessionId, record);
+    // M5 analyzer pipeline — every table, every origin; isolated failures.
+    // Settings snapshot from hand start (§6 non-retroactive).
+    const tags = analyzeHand(record, { settings: this._handSettings });
+    await this.repos.recordingRepo.recordHand(this.sessionId, record, tags);
 
     // Busted players sit out until they re-buy or leave (M2 §3).
     for (const seat of this.engine.occupiedSeats()) {
