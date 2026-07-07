@@ -8,6 +8,44 @@ import { computeCounters } from '../game/counters.js';
  */
 const EXPORT_SEQ_LOCK = 815001;
 
+/**
+ * Run `fn` inside ONE transaction on ONE connection (M8.6 fix). On a
+ * `pg.Pool`, `begin`/`pg_advisory_xact_lock`/`commit` issued as separate
+ * `pool.query()` calls can each land on a DIFFERENT pooled connection — so
+ * the advisory lock and the transaction would not actually span the
+ * statements, and under concurrent tables the export_seq ordering guarantee
+ * (§3) would break. Pinning a client makes the lock real. PGlite (tests) has
+ * no `connect()` and is single-connection, so it runs `fn` on `db` directly.
+ */
+async function withTx(db, fn) {
+  if (typeof db.connect === 'function') {
+    const client = await db.connect();
+    try {
+      await client.query('begin');
+      await client.query('select pg_advisory_xact_lock($1)', [EXPORT_SEQ_LOCK]);
+      const result = await fn(client);
+      await client.query('commit');
+      return result;
+    } catch (err) {
+      await client.query('rollback').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+  // Single-connection fallback (PGlite): the pool hazard cannot arise.
+  await db.query('begin');
+  try {
+    await db.query('select pg_advisory_xact_lock($1)', [EXPORT_SEQ_LOCK]);
+    const result = await fn(db);
+    await db.query('commit');
+    return result;
+  } catch (err) {
+    await db.query('rollback').catch(() => {});
+    throw err;
+  }
+}
+
 export function buildRecordingRepo(db) {
   return {
     async openSession({ tableId, tableMode, crmEntryId = null, coachPlayerId = null }) {
@@ -20,10 +58,8 @@ export function buildRecordingRepo(db) {
     },
 
     async finalizeSession(sessionId) {
-      await db.query('begin');
-      try {
-        await db.query('select pg_advisory_xact_lock($1)', [EXPORT_SEQ_LOCK]);
-        const { rows } = await db.query(
+      return withTx(db, async (tx) => {
+        const { rows } = await tx.query(
           `update sessions
               set status = 'completed', ended_at = now(),
                   hand_count = (select count(*) from hands where session_id = $1),
@@ -32,12 +68,8 @@ export function buildRecordingRepo(db) {
             returning *`,
           [sessionId]
         );
-        await db.query('commit');
         return rows[0] || null;
-      } catch (err) {
-        await db.query('rollback');
-        throw err;
-      }
+      });
     },
 
     /**
@@ -46,22 +78,16 @@ export function buildRecordingRepo(db) {
      * triggers bumps — the plumbing and its tests land in M3.
      */
     async bumpRevision(handId) {
-      await db.query('begin');
-      try {
-        await db.query('select pg_advisory_xact_lock($1)', [EXPORT_SEQ_LOCK]);
-        const { rows } = await db.query(
+      return withTx(db, async (tx) => {
+        const { rows } = await tx.query(
           `update hands
               set revision = revision + 1, export_seq = nextval('export_seq')
             where id = $1
             returning *`,
           [handId]
         );
-        await db.query('commit');
         return rows[0] || null;
-      } catch (err) {
-        await db.query('rollback');
-        throw err;
-      }
+      });
     },
 
     async findOpenSession(tableId) {
@@ -90,10 +116,8 @@ export function buildRecordingRepo(db) {
      */
     async recordHand(sessionId, record, tags = []) {
       const counters = computeCounters(record);
-      await db.query('begin');
-      try {
-        await db.query('select pg_advisory_xact_lock($1)', [EXPORT_SEQ_LOCK]);
-        const { rows } = await db.query(
+      return withTx(db, async (tx) => {
+        const { rows } = await tx.query(
           `insert into hands (session_id, origin, board, pot, export_seq)
            values ($1, $2, $3, $4, nextval('export_seq')) returning id`,
           [sessionId, record.origin, JSON.stringify(record.board), record.pot]
@@ -102,7 +126,7 @@ export function buildRecordingRepo(db) {
 
         for (const p of record.participants) {
           const c = counters[p.playerId];
-          await db.query(
+          await tx.query(
             `insert into hand_participants
                (hand_id, player_id, position, hole_cards, stack_start,
                 stack_end, is_winner, vpip, pfr, three_bet_opp, three_bet,
@@ -116,7 +140,7 @@ export function buildRecordingRepo(db) {
         }
 
         for (const a of record.actions) {
-          await db.query(
+          await tx.query(
             `insert into hand_actions (hand_id, seq, player_id, street, action, amount, reverted)
              values ($1, $2, $3, $4, $5, $6, $7)`,
             [handId, a.seq, a.playerId, a.street, a.action, a.amount, a.reverted ?? false]
@@ -124,19 +148,15 @@ export function buildRecordingRepo(db) {
         }
 
         for (const t of tags) {
-          await db.query(
+          await tx.query(
             `insert into hand_tags (hand_id, tag, tag_type, player_id, action_seq)
              values ($1, $2, $3, $4, $5)`,
             [handId, t.tag, t.tag_type, t.player_id ?? null, t.action_seq ?? null]
           );
         }
 
-        await db.query('commit');
         return handId;
-      } catch (err) {
-        await db.query('rollback');
-        throw err;
-      }
+      });
     },
   };
 }

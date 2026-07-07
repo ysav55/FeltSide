@@ -265,6 +265,57 @@ describe('M8.3 crash drills — recover + ledger + export (RUNTIME §1)', () => 
     await sleep(5);
   }, 30_000);
 
+  it('MID-HAND persist does not lose committed chips on crash (RUNTIME §1 regression)', async () => {
+    // Regression for the M8.6 audit HIGH finding: a persist that fires while a
+    // hand is in flight (cash join/rebuy/sit-out, or the tournament 30s clock
+    // tick) must NOT write reduced live stacks — otherwise a crash voids the
+    // hand without returning the committed chips.
+    const ctx = await testApp({ tableTimers: timers });
+    const { app, db, tableService } = ctx;
+    const coachToken = await loginToken(app, 'coach@test.local', 'coach-secret-1');
+    const A = await fund(app, coachToken, 'MA', 'ma@t.io');
+    const B = await fund(app, coachToken, 'MB', 'mb@t.io');
+    const C = await fund(app, coachToken, 'MC', 'mc@t.io');
+    const runtime = await tableService.createTable({ creator: A, smallBlind: 50, bigBlind: 100, tableSize: 6 });
+    const tableId = runtime.tableId;
+    await runtime.join({ player: A, buyIn: 10_000 });
+    await runtime.join({ player: B, buyIn: 10_000 });
+    await driveHand(runtime, strategies.checkDown);
+    const handStart = Object.fromEntries(runtime.engine.occupiedSeats().map((s) => [s.playerId, s.stack]));
+
+    // Hand 2: A commits a big raise (live stack drops well below hand-start).
+    await waitFor(() => runtime.engine.isHandRunning());
+    const first = runtime.engine.seats[runtime.engine.toAct].playerId;
+    await runtime.act(first, { type: 'raise', amount: 3_000 });
+    expect(runtime.engine.isHandRunning()).toBe(true);
+    expect(runtime.engine.findSeat(first).stack).toBeLessThan(handStart[first]); // reduced live stack
+
+    // A THIRD player joins mid-hand → this triggers _persistSeats WHILE the
+    // hand is live (the exact path the audit flagged). Then crash.
+    await runtime.join({ player: C, buyIn: 10_000 });
+    runtime.stop(); // ← the kill, after a mid-hand persist
+
+    const revived = reboot(ctx);
+    expect(await revived.recover()).toBe(1);
+    const rt = revived.get(tableId);
+    // The voided hand returned every committed chip: the two who played hand 2
+    // are back at their hand-2-start stacks, not the reduced mid-hand values.
+    for (const s of rt.engine.occupiedSeats()) {
+      if (handStart[s.playerId] != null) expect(s.stack).toBe(handStart[s.playerId]);
+      expect(s.contributed).toBe(0);
+    }
+    // The mid-hand joiner is seated with a full buy-in.
+    expect(rt.engine.findSeat(C.id)?.stack).toBe(10_000);
+    // Closed economy: every chip on the table is backed by a buy-in.
+    const onTable = rt.engine.occupiedSeats().reduce((n, s) => n + s.stack, 0);
+    const { rows } = await db.query(
+      `select coalesce(-sum(amount),0)::bigint b from bankroll_transactions where ref_id=$1 and type='buy_in'`, [tableId]);
+    expect(onTable).toBe(Number(rows[0].b)); // 3 buy-ins of 10k = 30k on the table
+    expect(await ledgerOk(db)).toBe(true);
+    rt.stop();
+    await sleep(5);
+  }, 25_000);
+
   it('kill during SYNC reconcile: half-applied reconcile self-heals on the next full push', async () => {
     const ctx = await testApp({ tableTimers: timers });
     const { db, repos } = ctx;

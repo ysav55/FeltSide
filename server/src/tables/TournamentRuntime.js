@@ -471,8 +471,9 @@ export class TournamentRuntime {
     // A recording failure must never kill the game loop — the tournament
     // plays on and the error is surfaced, not swallowed.
     try {
-      const settings = this.settingsProvider ? await this.settingsProvider() : undefined;
-      const tags = analyzeHand(record, { settings });
+      // Deal-time snapshot (captured in _pump), NOT a fresh read here — §6
+      // non-retroactivity: a settings change mid-hand must not judge this hand.
+      const tags = analyzeHand(record, { settings: table.handSettings });
       await this.repos.recordingRepo.recordHand(this.sessionId, record, tags);
     } catch (err) {
       log.error('tournament_hand_recording_failed', {
@@ -618,6 +619,9 @@ export class TournamentRuntime {
           if (this.clock.onBreak || !table.engine.canStartHand()) { table.idle = true; return; }
           if (this._structureChangeDue() || !this.tables.has(table.no)) { table.idle = true; return; }
           table.engine.setLevelBlinds(this._levelBlinds());
+          // §6 non-retroactivity: snapshot analyzer settings at DEAL time, not
+          // at hand completion — a mid-hand settings change applies next hand.
+          table.handSettings = this.settingsProvider ? await this.settingsProvider() : undefined;
           await table.engine.startHand();
           this._broadcast();
         }).catch(() => { table.idle = true; });

@@ -146,14 +146,21 @@ export class CoachedTableRuntime {
     return this._source;
   }
 
-  /** Panel input validation: format + central duplicate rejection (§1.3). */
-  _validateCard(card) {
+  /**
+   * Panel input validation: format + central duplicate rejection (§1.3).
+   * `except` lets the slot/board cell being EDITED exclude its own current
+   * cards from the duplicate check — otherwise changing one card of a
+   * two-card hole (Ah Kd → Ah Ks) would falsely collide with the stale Ah
+   * still sitting in the same slot (M8.6 DEALING F3 fix).
+   */
+  _validateCard(card, except = {}) {
     if (!/^[2-9TJQKA][hdcs]$/.test(card ?? '')) throw new EngineError('invalid_card');
-    // Against other panel-assigned cards…
+    // Against other panel-assigned cards (excluding the slot under edit)…
     const assigned = [
-      ...Object.values(this.panel.slots)
-        .flatMap((s) => (s.mode === 'cards' ? s.cards ?? [] : [])),
-      ...this.panel.board,
+      ...Object.entries(this.panel.slots)
+        .filter(([pid]) => pid !== except.slotPlayerId)
+        .flatMap(([, s]) => (s.mode === 'cards' ? s.cards ?? [] : [])),
+      ...this.panel.board.filter((_, i) => i !== except.boardIndex),
     ].filter(Boolean);
     if (assigned.includes(card)) throw new EngineError('duplicate_card');
     // …and against cards already drawn in a live hand.
@@ -166,7 +173,7 @@ export class CoachedTableRuntime {
     if (slot === null) { delete this.panel.slots[playerId]; this._coachBroadcast(); return; }
     if (slot.mode === 'cards') {
       const cards = [slot.cards?.[0] ?? null, slot.cards?.[1] ?? null];
-      for (const c of cards) if (c) this._validateCard(c);
+      for (const c of cards) if (c) this._validateCard(c, { slotPlayerId: playerId });
       if (cards[0] && cards[1] && cards[0] === cards[1]) throw new EngineError('duplicate_card');
       this.panel.slots[playerId] = { mode: 'cards', cards };
     } else if (slot.mode === 'range') {
@@ -180,7 +187,7 @@ export class CoachedTableRuntime {
 
   setBoardSlot(index, card) {
     if (!Number.isInteger(index) || index < 0 || index > 4) throw new EngineError('invalid_slot');
-    if (card !== null) this._validateCard(card);
+    if (card !== null) this._validateCard(card, { boardIndex: index });
     this.panel.board[index] = card;
     this.panel.fromScenario = false;
     this._coachBroadcast();

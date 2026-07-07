@@ -7,8 +7,9 @@ const KNOWN_TAGS = new Set(TAG_VOCABULARY.map((t) => t.tag));
 
 /**
  * Analyzer Settings (TAXONOMY §6): charts, per-tag kill switches,
- * thresholds. Strictly NON-RETROACTIVE — analyzers snapshot at hand
- * completion; nothing here re-analyzes history.
+ * thresholds. Strictly NON-RETROACTIVE — the runtime snapshots settings at
+ * deal/hand-start time, so a change here applies from the next hand on;
+ * nothing here re-analyzes history.
  */
 export function buildAnalyzerSettingsRoutes({ settingsRepo, requireAuth, requireCoach }) {
   const router = Router();

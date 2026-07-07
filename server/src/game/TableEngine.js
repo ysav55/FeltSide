@@ -807,11 +807,22 @@ export class TableEngine {
     };
   }
 
-  /** Seat snapshot persisted after every completed hand (RUNTIME §1). */
+  /**
+   * Seat snapshot for the recovery store (RUNTIME §1). The snapshot must
+   * always hold hand-START stacks: on a crash the in-flight hand is voided
+   * and rebuilt from here, so recorded stacks have to be the pre-hand values
+   * for "all bets returned" to hold. Live `stack` is reduced by posted
+   * blinds/antes/bets mid-hand, so while a hand is running we emit the
+   * captured hand-start value instead. Between hands (waiting / hand_complete)
+   * live stack IS the settled value. This makes EVERY persist path safe, even
+   * a mid-hand one (a cash join/rebuy/sit-out, or the tournament clock tick).
+   */
   snapshotSeats() {
+    const midHand = this.isHandRunning();
     return this.occupiedSeats().map((s) => ({
       playerId: s.playerId, name: s.name, seatIndex: s.seatIndex,
-      stack: s.stack, sittingOut: s.sittingOut,
+      stack: midHand ? (this.handStartStacks[s.playerId] ?? s.stack) : s.stack,
+      sittingOut: s.sittingOut,
     }));
   }
 

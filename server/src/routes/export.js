@@ -68,7 +68,7 @@ export function buildExportRoutes({ exportRepo, config }) {
           net_chips: Number(p.net_chips),
           finish_position: p.finish_position ?? null, // tournaments only
         })),
-      })));
+      }), q.afterSeq));
     } catch (err) { next(err); }
   });
 
@@ -122,7 +122,7 @@ export function buildExportRoutes({ exportRepo, config }) {
           player_id: t.player_id ?? null,
           action_seq: t.action_seq === null ? null : Number(t.action_seq),
         })),
-      })));
+      }), q.afterSeq));
     } catch (err) { next(err); }
   });
 
@@ -178,15 +178,20 @@ function parseCursorQuery(req, res) {
   return { afterSeq, limit };
 }
 
-/** §3 response envelope over a mapped page ordered by export_seq. */
-function envelope(page, hasMore, mapFn) {
-  return {
-    data: page.map(mapFn),
-    next_cursor: page.length > 0
-      ? encodeCursor(String(page[page.length - 1].export_seq))
-      : null,
-    has_more: hasMore,
-  };
+/**
+ * §3 response envelope over a mapped page ordered by export_seq.
+ * On an EMPTY page we echo the caller's cursor (M8.6 CONTRACT fix) rather
+ * than null: a caught-up poller that stores `next_cursor` verbatim would,
+ * on `null`, forget its position and re-pull from the beginning every idle
+ * tick — safe (idempotent) but wasteful, and amplified by cold starts. Echo
+ * keeps it parked. Only a first-ever poll with no cursor and no data yields
+ * null (there is genuinely no position to resume).
+ */
+function envelope(page, hasMore, mapFn, afterSeq = '0') {
+  let nextCursor;
+  if (page.length > 0) nextCursor = encodeCursor(String(page[page.length - 1].export_seq));
+  else nextCursor = afterSeq === '0' ? null : encodeCursor(afterSeq);
+  return { data: page.map(mapFn), next_cursor: nextCursor, has_more: hasMore };
 }
 
 function iso(v) {

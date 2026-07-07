@@ -167,6 +167,34 @@ describe('DEALING §1.4 — origin matrix (computed, never declared)', () => {
   });
 });
 
+describe('DEALING §1.3 — duplicate guard (central integrity)', () => {
+  it('rejects real duplicates but allows editing one card of a two-card slot (M8.6 F3)', async () => {
+    const { runtime, roster } = await coachedFixture();
+    const [p1, p2] = roster;
+    runtime.setHoleSlot(p1.id, { mode: 'cards', cards: ['Ah', 'Kd'] });
+
+    // A genuine cross-slot duplicate is still rejected.
+    expect(() => runtime.setHoleSlot(p2.id, { mode: 'cards', cards: ['Ah', 'Qs'] }))
+      .toThrowError(/duplicate_card/);
+    // Same card twice in one slot is still rejected.
+    expect(() => runtime.setHoleSlot(p2.id, { mode: 'cards', cards: ['7c', '7c'] }))
+      .toThrowError(/duplicate_card/);
+
+    // Editing p1's OWN slot — change only the second card — must NOT collide
+    // with the stale Ah still sitting in that same slot (the F3 bug).
+    expect(() => runtime.setHoleSlot(p1.id, { mode: 'cards', cards: ['Ah', 'Ks'] }))
+      .not.toThrow();
+    expect(runtime.engine ? runtime.panel.slots[p1.id].cards : null).toEqual(['Ah', 'Ks']);
+
+    // And a board card can be re-typed in place without a false self-collision.
+    runtime.setBoardSlot(0, '2c');
+    expect(() => runtime.setBoardSlot(0, '2d')).not.toThrow();
+    expect(runtime.panel.board[0]).toBe('2d');
+    // But re-typing a board card to one that a hole slot holds is rejected.
+    expect(() => runtime.setBoardSlot(1, 'Ah')).toThrowError(/duplicate_card/);
+  });
+});
+
 describe('PRD §3.1 — visibility (server-side, non-negotiable)', () => {
   it('players never see other hole cards; coach sees ONLY assigned/range draws', async () => {
     const { runtime, roster, coach } = await coachedFixture({ players: 3 });

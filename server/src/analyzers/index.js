@@ -6,12 +6,14 @@ import { mergeAnalyzerSettings } from './defaults.js';
 import { log } from '../log.js';
 
 /**
- * The analyzer pipeline (TAXONOMY §§1–4), run at hand completion.
+ * The analyzer pipeline (TAXONOMY §§1–4), run when a hand completes.
  *
  * - One analyzer failing NEVER blocks the others or hand recording:
  *   each module is isolated; failures are logged and swallowed.
- * - Settings are a snapshot taken at completion — strictly non-retroactive
- *   (§6); the per-tag kill switch filters at the end.
+ * - Settings are a snapshot the RUNTIME captures at DEAL/hand-start time and
+ *   passes in here — strictly non-retroactive (§6): a settings change made
+ *   while a hand is in flight applies only to the NEXT hand. The per-tag kill
+ *   switch filters at the end.
  * - Analyzers see only non-reverted actions (undo marks, never erases).
  */
 const MODULES = [

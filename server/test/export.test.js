@@ -285,9 +285,14 @@ describe('CONTRACT §3 — cursor semantics', () => {
     const again = await walk(app, '/export/v1/hands', { from: first.body.next_cursor });
     expect(again.records.map((h) => h.hand_id)).toEqual(ids.slice(2));
 
-    // End of stream: empty page, null cursor, no more.
+    // End of stream: empty page, no more — and the cursor is ECHOED (not
+    // null) so a caught-up poller that stores next_cursor stays parked at its
+    // position instead of forgetting it and re-pulling from the beginning
+    // (M8.6 CONTRACT fix). Re-sending the echoed cursor stays empty (stable).
     const end = await authed(app, `/export/v1/hands?cursor=${all.cursor}`);
-    expect(end.body).toEqual({ data: [], next_cursor: null, has_more: false });
+    expect(end.body).toEqual({ data: [], next_cursor: all.cursor, has_more: false });
+    const stillEnd = await authed(app, `/export/v1/hands?cursor=${end.body.next_cursor}`);
+    expect(stillEnd.body).toEqual({ data: [], next_cursor: all.cursor, has_more: false });
   });
 
   it('rejects garbage cursors with 400 invalid_cursor', async () => {
