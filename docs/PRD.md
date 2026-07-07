@@ -114,24 +114,28 @@ tournament-presets), one static API key, inbound `PUT /sync/v1/lessons`,
 Fly scale-to-zero tolerated (RUNTIME §1 guard: never sleep with active
 tables).
 
-## 9. Reuse Policy
+## 9. Reuse Policy (CLOSED — legacy/ retired in M8)
 
-- **Adopt (proven pure):** HandEvaluator, ShowdownResolver,
-  SidePotCalculator, bettingRound, Deck, RangeParser, positions,
-  BoardGenerator, EquityService, comboUtils. HandGenerator only with
-  ARCH-10 fixed (silent texture fallback → visible error).
-- **Built new in M4 (amended per decisions/0004):** the range matrix and
-  range picker — they power the chart editor, range-deal, and scenario
-  ranges. The old repo never contained them; `legacy/extracted/*` (preset
-  vocabulary, combo intersection, board texture) is raw material only,
-  not a module to graduate.
-- **Audit before adoption:** ReplayEngine (fix mutation-by-reference /
-  ARCH-05), PokerTable, BettingControls — judged individually.
-- **Rebuild lean, never adopt:** GameManager and successors, controllers,
+The reuse program is complete; `legacy/` was emptied and deleted in M8
+(decisions/0012). Final ledger:
+
+- **Adopted (proven pure, graduated with new test suites):**
+  HandEvaluator, ShowdownResolver, SidePotCalculator, bettingRound, Deck,
+  RangeParser, positions.
+- **Never existed in the old repo (decisions/0004):** BoardGenerator,
+  EquityService, comboUtils, RangeMatrix, RangePicker — all built new
+  (equity library in M5, range matrix/picker in M4).
+- **Superseded, never adopted:** HandGenerator (its fill-the-gaps role is
+  served by the M4 `coachedCardSource`; the ARCH-10 gate was never
+  exercised), client rangeParser (replaced by `client/src/utils/ranges.js`),
+  PokerTable/BettingControls (table UI rebuilt — decisions/0005),
+  `extracted/*` raw material (reference role ended with M4/M5).
+- **Rebuilt, never adopted:** ReplayEngine (its architecture *was*
+  ARCH-05 — decisions/0010), GameManager and successors, controllers,
   socket layer, auth middleware, SharedState.
-- **"Proven good" bar:** zero old-world imports; passes a NEW test suite
-  written against this PRD (not old behavior); all registered findings on
-  the module fixed at migration.
+- **"Proven good" bar (as enforced):** zero old-world imports; passes a
+  NEW test suite written against this PRD (not old behavior); all
+  registered findings on the module fixed at migration.
 
 ## 10. Stack
 
@@ -161,6 +165,11 @@ unresolved questions — escalate instead.
 - **M6 — Review:** replay, annotations, branch, group transition,
   review_url, revision re-emit.
 - **M7 — Tournaments:** TOURNAMENTS.md in full.
+- **M8 — Production hardening & handoff** *(added post-PRD by command
+  decision, 2026-07)*: legacy retirement, load & soak at target scale,
+  crash drills, security pass, operations runbook + backup/restore drill,
+  full conformance audit, final grand E2E with the CRM. Hardens only —
+  adds no features.
 
 ## 12. Cross-Cutting Rules
 

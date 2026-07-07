@@ -1,9 +1,9 @@
 /**
  * ReplayEngine — pure, immutable reconstruction of a recorded hand
- * (PRD §5, M6). REBUILT, not graduated: the legacy module (legacy/game/
- * ReplayEngine.js) was welded to the old GameManager state shape and its
- * architecture *was* ARCH-05 — every helper mutated a shared `state` by
- * reference and `branch()` did an unbounded `JSON.parse(JSON.stringify(state))`.
+ * (PRD §5, M6). REBUILT, not graduated: the old repo's ReplayEngine was
+ * welded to the old GameManager state shape and its architecture *was*
+ * ARCH-05 — every helper mutated a shared `state` by reference and
+ * `branch()` did an unbounded `JSON.parse(JSON.stringify(state))`.
  * See docs/decisions/0010.
  *
  * This version derives an immutable array of frames (one per non-reverted

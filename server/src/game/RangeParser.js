@@ -1,6 +1,6 @@
 /**
- * RangeParser — poker hand-range notation (graduated from legacy/ per
- * PRD §9: new rule-based suite in test/game/rangeParser.test.js).
+ * RangeParser — poker hand-range notation (graduated from the old repo
+ * per PRD §9: new rule-based suite in test/game/rangeParser.test.js).
  *
  * Supported syntax (comma-separated, any combination):
  *   AA          — specific pair (6 combos)
@@ -11,9 +11,9 @@
  *   66+         — pairs from 66 up
  *   JTs-87s     — suited connector range (same gap, descending)
  *
- * Graduation fixes vs legacy:
+ * Graduation fixes vs the original (docs/decisions/0009):
  *   - cards are emitted in ENGINE format (rank uppercase + suit lowercase,
- *     e.g. "As") — legacy emitted all-uppercase, which no other module uses;
+ *     e.g. "As") — the original emitted all-uppercase, which no other module uses;
  *   - pickFromRange accepts an injectable rng (determinism in tests);
  *   - rangeContains() added for chart membership (TAXONOMY §4).
  *

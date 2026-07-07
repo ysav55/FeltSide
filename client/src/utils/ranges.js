@@ -1,6 +1,6 @@
 /**
  * Range-grid utilities for the 13×13 matrix (BUILT NEW — decision 0004;
- * legacy/extracted/* was reference only). Token-level only: the matrix
+ * old-repo extractions were reference only). Token-level only: the matrix
  * selects grid cells ("AKs", "77", "T9o"); the server's RangeParser is the
  * combo-level authority.
  */
