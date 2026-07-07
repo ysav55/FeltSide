@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
-import { testApp, login, loginToken, createPlayer } from './helpers.js';
+import jwt from 'jsonwebtoken';
+import { testApp, testDb, TEST_CONFIG, login, loginToken, createPlayer } from './helpers.js';
+import { createApp } from '../src/app.js';
+import { seedCoach } from '../src/seed.js';
+import { buildRateLimiter } from '../src/auth/rateLimit.js';
 
 let app;
 beforeEach(async () => {
@@ -149,5 +153,92 @@ describe('every API endpoint rejects unauthenticated requests (M1 acceptance #4)
       const res = await request(app)[method](path).send({});
       expect(res.status, `${method} ${path}`).toBe(401);
     }
+  });
+});
+
+// ── M8.4 security pass ──────────────────────────────────────────────────
+describe('auth rate limiting (M8.4)', () => {
+  /** App with the brute-force guard turned on (tight for a deterministic test). */
+  async function limitedApp({ perEmailMax = 5, perIpMax = 100 } = {}) {
+    const db = await testDb();
+    await seedCoach(db, TEST_CONFIG);
+    const config = { ...TEST_CONFIG, authRateLimit: { perEmailMax, perIpMax } };
+    return createApp({ db, config });
+  }
+
+  it('locks a single account after N bad attempts, with Retry-After, then 429s further tries', async () => {
+    const a = await limitedApp({ perEmailMax: 5 });
+    // 5 allowed (all 401 bad creds), 6th is throttled.
+    for (let i = 0; i < 5; i++) {
+      const r = await login(a, 'coach@test.local', 'wrong');
+      expect(r.status, `attempt ${i + 1}`).toBe(401);
+    }
+    const blocked = await login(a, 'coach@test.local', 'wrong');
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.error).toBe('rate_limited');
+    expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+    expect(blocked.body.retry_after_sec).toBeGreaterThan(0);
+
+    // Even the CORRECT password is refused while the window is hot — the
+    // guard is on the attempt rate, not the outcome.
+    const correctButLocked = await login(a, 'coach@test.local', 'coach-secret-1');
+    expect(correctButLocked.status).toBe(429);
+  });
+
+  it('one account being hammered does not lock a different account from the same IP', async () => {
+    const a = await limitedApp({ perEmailMax: 3, perIpMax: 100 });
+    for (let i = 0; i < 4; i++) await login(a, 'victim@test.local', 'x');
+    // A different email is still served (per-email bucket is independent).
+    const other = await login(a, 'coach@test.local', 'coach-secret-1');
+    expect(other.status).toBe(200);
+  });
+
+  it('the per-IP backstop caps total attempts across many accounts', async () => {
+    const a = await limitedApp({ perEmailMax: 0, perIpMax: 5 });
+    for (let i = 0; i < 5; i++) {
+      const r = await login(a, `stuff${i}@test.local`, 'x');
+      expect(r.status).toBe(401); // distinct emails, so per-email never trips
+    }
+    const blocked = await login(a, 'stuff-final@test.local', 'x');
+    expect(blocked.status).toBe(429); // per-IP backstop
+  });
+
+  it('a fixed window resets after it elapses (injected clock)', () => {
+    let t = 1_000_000;
+    const limiter = buildRateLimiter({ windowMs: 1000, max: 2, keyFn: () => 'k', now: () => t });
+    const run = () => {
+      let status = 200;
+      limiter({ headers: {}, body: {} }, {
+        status: (s) => { status = s; return { json: () => {}, set: () => {} }; },
+        set: () => {},
+      }, () => {});
+      return status;
+    };
+    expect(run()).toBe(200);
+    expect(run()).toBe(200);
+    expect(run()).toBe(429);   // over the max
+    t += 1001;                 // next window
+    expect(run()).toBe(200);   // reset
+  });
+});
+
+describe('JWT expiry + re-auth (M8.4)', () => {
+  it('an expired token is rejected as unauthenticated', async () => {
+    const { app: a } = await testApp();
+    const player = { id: '00000000-0000-0000-0000-000000000000', role: 'coach' };
+    // Sign a token that expired an hour ago against the test secret.
+    const expired = jwt.sign({ sub: player.id, role: player.role }, TEST_CONFIG.jwtSecret, {
+      expiresIn: '-1h',
+    });
+    const res = await request(a).get('/api/auth/me').set('Authorization', `Bearer ${expired}`);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('invalid_token');
+  });
+
+  it('a token signed with the wrong secret is rejected', async () => {
+    const { app: a } = await testApp();
+    const forged = jwt.sign({ sub: 'x', role: 'coach' }, 'not-the-secret', { expiresIn: '1h' });
+    const res = await request(a).get('/api/auth/me').set('Authorization', `Bearer ${forged}`);
+    expect(res.status).toBe(401);
   });
 });

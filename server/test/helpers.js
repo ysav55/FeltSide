@@ -14,6 +14,9 @@ export const TEST_CONFIG = {
   coachInitialPassword: 'coach-secret-1',
   coachDisplayName: 'Test Coach',
   clientOrigin: 'http://localhost:5173',
+  // Off by default so the existing suites aren't throttled; the dedicated
+  // rate-limit test (auth.test.js) opts back in with an explicit config.
+  authRateLimit: { perEmailMax: 0, perIpMax: 0 },
 };
 
 /** Fresh in-process Postgres with the real migrations applied. */

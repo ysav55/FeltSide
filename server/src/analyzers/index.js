@@ -3,6 +3,7 @@ import { analyzePlayerDescriptors } from './playerDescriptors.js';
 import { analyzeAbsoluteMistakes } from './absoluteMistakes.js';
 import { analyzeChartMistakes } from './chartMistakes.js';
 import { mergeAnalyzerSettings } from './defaults.js';
+import { log } from '../log.js';
 
 /**
  * The analyzer pipeline (TAXONOMY §§1–4), run at hand completion.
@@ -35,5 +36,5 @@ export function analyzeHand(record, { settings, log = defaultLog } = {}) {
 
 function defaultLog(name, err) {
   // No console.log debug in committed code (PRD §12) — this is an error path.
-  console.error(`[analyzer:${name}] failed: ${err?.message ?? err}`);
+  log.error('analyzer_failed', { analyzer: name, message: err?.message ?? String(err) });
 }

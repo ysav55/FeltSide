@@ -22,5 +22,11 @@ export function loadConfig(env = process.env) {
     coachInitialPassword: required('COACH_INITIAL_PASSWORD'),
     coachDisplayName: env.COACH_DISPLAY_NAME || 'Coach',
     clientOrigin: env.CLIENT_ORIGIN || 'http://localhost:5173',
+    // M8.4 auth rate limits (per minute). Defaults are production-sane;
+    // load tests raise them. 0 disables a limiter (documented ops knob).
+    authRateLimit: {
+      perEmailMax: env.AUTH_RL_PER_EMAIL != null ? Number(env.AUTH_RL_PER_EMAIL) : 10,
+      perIpMax: env.AUTH_RL_PER_IP != null ? Number(env.AUTH_RL_PER_IP) : 60,
+    },
   };
 }

@@ -4,6 +4,7 @@ import { analyzeHand } from '../analyzers/index.js';
 import { computePayouts } from '../tournament/payouts.js';
 import { icmEquities, icmDeal } from '../tournament/icm.js';
 import { ladderLevel, startingStack } from '../tournament/presets.js';
+import { log } from '../log.js';
 
 /**
  * TournamentRuntime — one tournament (TOURNAMENTS.md), autonomous state
@@ -474,7 +475,9 @@ export class TournamentRuntime {
       const tags = analyzeHand(record, { settings });
       await this.repos.recordingRepo.recordHand(this.sessionId, record, tags);
     } catch (err) {
-      console.error(`tournament ${this.tournamentId}: hand recording failed`, err);
+      log.error('tournament_hand_recording_failed', {
+        tournamentId: this.tournamentId, message: err?.message ?? String(err),
+      });
     }
     // (Busts were already applied synchronously in _applyBusts.)
     await this._afterBoundary();

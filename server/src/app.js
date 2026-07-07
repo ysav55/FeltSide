@@ -25,6 +25,7 @@ import { buildReviewRoutes } from './routes/review.js';
 import { buildExportRoutes } from './routes/export.js';
 import { buildSyncRoutes } from './routes/sync.js';
 import { buildTournamentPresetsRoutes, buildTournamentsRoutes } from './routes/tournaments.js';
+import { log } from './log.js';
 
 const CLIENT_DIST = join(dirname(fileURLToPath(import.meta.url)), '../../client/dist');
 
@@ -101,6 +102,12 @@ export function createApp({ db, config, tableService = null, tableTimers = {}, c
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {
+    // The client sees a generic body (no leak); operators get the real error
+    // in a structured line (secrets scrubbed by the logger).
+    log.error('request_error', {
+      method: req.method, path: req.path,
+      message: err?.message, stack: err?.stack,
+    });
     res.status(500).json({ error: 'internal_error' });
   });
 

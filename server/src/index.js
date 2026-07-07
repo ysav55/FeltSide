@@ -4,6 +4,7 @@ import { loadConfig } from './config.js';
 import { createApp } from './app.js';
 import { seedCoach, seedTournamentPresets } from './seed.js';
 import { attachSockets } from './socket.js';
+import { log } from './log.js';
 
 const config = loadConfig();
 if (!config.databaseUrl) {
@@ -42,11 +43,11 @@ await autoOpen();
 setInterval(autoOpen, 60 * 60 * 1000).unref();
 
 server.listen(config.port, () => {
-  console.log(
-    `FeltSide server on :${config.port}` +
-    (seeded ? ` (coach seeded: ${seeded.email})` : '') +
-    (recovered ? ` (${recovered} table(s) recovered)` : '')
-  );
+  log.info('server_started', {
+    port: config.port,
+    coachSeeded: seeded ? seeded.email : null,
+    tablesRecovered: recovered,
+  });
 });
 
 // Fly scale-to-zero (RUNTIME §1): stacks are snapshotted after every
