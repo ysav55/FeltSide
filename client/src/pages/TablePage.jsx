@@ -5,6 +5,10 @@ import PlayingCard from '../components/PlayingCard.jsx';
 import DealingPanel from '../components/DealingPanel.jsx';
 import CoachControls from '../components/CoachControls.jsx';
 import GroupReviewOverlay from '../components/GroupReviewOverlay.jsx';
+import {
+  TournamentTopBar, TournamentLobby, TournamentStandings,
+  DealBanner, BustPanel, AddonBanner, TournamentCoachPanel,
+} from '../components/TournamentPanel.jsx';
 
 const fmt = (n) => Number(n ?? 0).toLocaleString('en-US');
 
@@ -71,6 +75,8 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
   const tableId = initialTable.tableId;
   const isCoach = player.role === 'coach';
   const coached = table.mode === 'coached_cash';
+  const tournament = table.mode === 'tournament' ? table.tournament : null;
+  const registered = Boolean(tournament?.myEntry?.registered);
 
   useEffect(() => {
     const socket = getSocket();
@@ -108,7 +114,20 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
       socket.off('table:coach_state', onCoach);
       socket.off('connect', enter);
     };
-  }, [tableId, isCoach]);
+  }, [tableId, isCoach, registered]);
+
+  // An unregistered tournament viewer has no socket room yet — poll the
+  // lobby state until they register (then the socket takes over).
+  useEffect(() => {
+    if (!tournament || registered || isCoach) return undefined;
+    const id = setInterval(async () => {
+      try {
+        const res = await api(`/tables/${tableId}`);
+        if (res?.table) setTable(res.table);
+      } catch { /* table may have completed */ }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [tableId, tournament ? 1 : 0, registered, isCoach]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendCoach = useCallback((command, payload = {}, cb) => {
     socketRef.current?.emit('coach:command', { tableId, command, payload }, (res) => {
@@ -178,22 +197,26 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
         <div>
           <span className="text-emerald-400 font-semibold">FeltSide</span>
           <span className="text-slate-400 text-sm ml-3">
-            {table.name || 'Cash game'} · {table.config.smallBlind}/{table.config.bigBlind}
+            {tournament
+              ? table.name
+              : `${table.name || 'Cash game'} · ${table.config.smallBlind}/${table.config.bigBlind}`}
           </span>
         </div>
         <div className="flex items-center gap-3 text-sm">
           <ActionTimer deadline={myTurn ? table.actionDeadline : null} />
-          {mySeat && !coached && (
+          {mySeat && !coached && !tournament && (
             <button onClick={toggleSitOut} className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1">
               {mySeat.sittingOut ? 'Sit in' : 'Sit out'}
             </button>
           )}
-          {mySeat && (
+          {mySeat && !tournament && (
             <button onClick={leave} className="rounded-md bg-rose-900/60 hover:bg-rose-900 px-3 py-1">
               Leave table
             </button>
           )}
-          {!mySeat && isCoach && (
+          {/* §8: a tournament seat is never vacated — leaving the page only
+              disconnects; blinds post and the timer folds in absentia. */}
+          {(tournament || (!mySeat && isCoach)) && (
             <button onClick={onLeft} className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1">
               Back to lobby
             </button>
@@ -202,6 +225,17 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
       </header>
 
       <main className="flex-1 max-w-5xl w-full mx-auto p-4 flex flex-col gap-4">
+        {/* Tournament surface (M7 §9) */}
+        {tournament && tournament.status !== 'registering' && (
+          <TournamentTopBar tournament={tournament} paused={table.paused} />
+        )}
+        {tournament && tournament.deal && (
+          <DealBanner tableId={tableId} tournament={tournament} player={player} onError={setError} />
+        )}
+        {tournament && tournament.onBreak && tournament.myEntry.canAddon && (
+          <AddonBanner tableId={tableId} onError={setError} />
+        )}
+
         {/* Coached-table status banners (neutral for players — DEALING §3/§6) */}
         {table.paused && (
           <div className="rounded-lg border border-sky-800 bg-sky-950/40 px-4 py-2 text-sky-200 text-sm">
@@ -214,31 +248,44 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
           </div>
         )}
 
-        {/* Board + pot */}
-        <div className="rounded-2xl border border-emerald-900 bg-emerald-950/40 p-6 flex flex-col items-center gap-3">
-          <div className="flex gap-2 min-h-16 items-center">
-            {table.board.length === 0
-              ? <span className="text-slate-600 text-sm">
-                  {table.phase === 'waiting' ? 'Waiting for players…' : 'Preflop'}
-                </span>
-              : table.board.map((c) => <PlayingCard key={c} card={c} />)}
-          </div>
-          <div className="text-amber-300 font-mono">Pot: {fmt(table.pot)}</div>
-          <div className="text-xs text-slate-500 uppercase tracking-wide">{table.phase.replaceAll('_', ' ')}</div>
-        </div>
+        {/* Pre-start tournament lobby (§3 registering) */}
+        {tournament && tournament.status === 'registering' ? (
+          <TournamentLobby
+            tableId={tableId}
+            tournament={tournament}
+            player={player}
+            onError={setError}
+            onUpdate={setTable}
+          />
+        ) : (
+          <>
+            {/* Board + pot */}
+            <div className="rounded-2xl border border-emerald-900 bg-emerald-950/40 p-6 flex flex-col items-center gap-3">
+              <div className="flex gap-2 min-h-16 items-center">
+                {table.board.length === 0
+                  ? <span className="text-slate-600 text-sm">
+                      {table.phase === 'waiting' ? 'Waiting for players…' : 'Preflop'}
+                    </span>
+                  : table.board.map((c) => <PlayingCard key={c} card={c} />)}
+              </div>
+              <div className="text-amber-300 font-mono">Pot: {fmt(table.pot)}</div>
+              <div className="text-xs text-slate-500 uppercase tracking-wide">{table.phase.replaceAll('_', ' ')}</div>
+            </div>
 
-        {/* Seats */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {table.seats.map((seat, idx) => (
-            <Seat
-              key={idx}
-              seat={seat}
-              isButton={table.button === idx}
-              isToAct={table.toAct === idx}
-              isMe={seat?.playerId === player.id}
-            />
-          ))}
-        </div>
+            {/* Seats */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {table.seats.map((seat, idx) => (
+                <Seat
+                  key={idx}
+                  seat={seat}
+                  isButton={table.button === idx}
+                  isToAct={table.toAct === idx}
+                  isMe={seat?.playerId === player.id}
+                />
+              ))}
+            </div>
+          </>
+        )}
 
         {error && <p className="text-rose-400 text-sm">{error}</p>}
 
@@ -284,6 +331,24 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
           </div>
         )}
 
+        {/* Tournament standings + ICM overlay (§7) */}
+        {tournament && tournament.status !== 'registering' && (
+          <TournamentStandings tournament={tournament} />
+        )}
+
+        {/* Tournament bust: re-entry window / final result */}
+        {tournament && !mySeat && registered && tournament.status !== 'registering' && (
+          <BustPanel tableId={tableId} tournament={tournament} onError={setError} />
+        )}
+
+        {/* Coach tournament panel — interventions + fast table switching */}
+        {isCoach && tournament && coachView && (
+          <TournamentCoachPanel
+            table={table} coach={coachView} send={sendCoach}
+            onEnded={() => {}} onError={setError}
+          />
+        )}
+
         {/* Coach sidebar — panel + controls (coached tables only) */}
         {isCoach && coached && coachView && (
           <div className="flex flex-col gap-3">
@@ -296,7 +361,7 @@ export default function TablePage({ player, table: initialTable, onLeft }) {
         )}
 
         {/* Bust → re-entry (uncoached bankroll flow only) */}
-        {busted && !coached && (
+        {busted && !coached && !tournament && (
           <div className="rounded-xl border border-amber-700 bg-amber-950/30 p-4 flex items-center gap-3">
             <span className="text-amber-200 text-sm">You busted. Re-enter with a new buy-in?</span>
             <input

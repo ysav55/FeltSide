@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api.js';
 
 export function CreateTableDialog({ onClose, onSeated, coach = false }) {
@@ -8,14 +8,35 @@ export function CreateTableDialog({ onClose, onSeated, coach = false }) {
   const [name, setName] = useState('');
   const [buyIn, setBuyIn] = useState('');
   const [mode, setMode] = useState('uncoached_cash');
+  const [presets, setPresets] = useState(null);
+  const [presetId, setPresetId] = useState('');
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  // Preset catalog (TOURNAMENTS §1) — loaded once the coach picks Tournament.
+  useEffect(() => {
+    if (mode !== 'tournament' || presets !== null) return;
+    api('/tournament-presets')
+      .then((res) => {
+        setPresets(res.data);
+        if (res.data[0]) setPresetId(res.data[0].id);
+      })
+      .catch(() => setError('Could not load tournament presets.'));
+  }, [mode, presets]);
 
   async function submit(e) {
     e.preventDefault();
     setBusy(true);
     setError(null);
     try {
+      if (coach && mode === 'tournament') {
+        const created = await api('/tournaments', {
+          method: 'POST',
+          body: { preset_id: presetId, name: name || undefined },
+        });
+        onSeated(created.table);
+        return;
+      }
       const created = await api('/tables', {
         method: 'POST',
         body: {
@@ -48,19 +69,46 @@ export function CreateTableDialog({ onClose, onSeated, coach = false }) {
     }
   }
 
+  if (coach && mode === 'tournament') {
+    const preset = presets?.find((p) => p.id === presetId);
+    return (
+      <Dialog title="Create tournament" onClose={onClose}>
+        <form onSubmit={submit} className="space-y-3">
+          <ModePicker coach mode={mode} setMode={setMode} />
+          <label className="block text-sm">
+            <span className="text-slate-400">Preset</span>
+            <select
+              value={presetId}
+              onChange={(e) => setPresetId(e.target.value)}
+              className="mt-1 w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2"
+            >
+              {(presets ?? []).map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {preset?.description && (
+              <span className="block mt-1 text-xs text-slate-500">{preset.description}</span>
+            )}
+          </label>
+          <label className="block text-sm">
+            <span className="text-slate-400">Name (optional)</span>
+            <input value={name} onChange={(e) => setName(e.target.value)}
+              className="mt-1 w-full rounded-md bg-slate-800 border border-slate-700 px-3 py-2" />
+          </label>
+          {error && <p className="text-rose-400 text-sm">{error}</p>}
+          <button disabled={busy || !presetId}
+            className="w-full rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 py-2 font-medium">
+            Open registration
+          </button>
+        </form>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog title="Create table" onClose={onClose}>
       <form onSubmit={submit} className="space-y-3">
-        {coach && (
-          <div className="flex rounded-md overflow-hidden border border-slate-700 text-sm">
-            {[['uncoached_cash', 'Cash game'], ['coached_cash', 'Coached table']].map(([m, label]) => (
-              <button type="button" key={m} onClick={() => setMode(m)}
-                className={`flex-1 py-2 ${mode === m ? 'bg-emerald-700' : 'bg-slate-800'}`}>
-                {label}
-              </button>
-            ))}
-          </div>
-        )}
+        {coach && <ModePicker coach mode={mode} setMode={setMode} />}
         <div className="flex gap-2">
           <label className="flex-1 text-sm">
             <span className="text-slate-400">Small blind</span>
@@ -151,6 +199,24 @@ export function JoinTableDialog({ table, onClose, onSeated }) {
         </button>
       </form>
     </Dialog>
+  );
+}
+
+function ModePicker({ mode, setMode }) {
+  const modes = [
+    ['uncoached_cash', 'Cash game'],
+    ['coached_cash', 'Coached table'],
+    ['tournament', 'Tournament'],
+  ];
+  return (
+    <div className="flex rounded-md overflow-hidden border border-slate-700 text-sm">
+      {modes.map(([m, label]) => (
+        <button type="button" key={m} onClick={() => setMode(m)}
+          className={`flex-1 py-2 ${mode === m ? 'bg-emerald-700' : 'bg-slate-800'}`}>
+          {label}
+        </button>
+      ))}
+    </div>
   );
 }
 

@@ -945,6 +945,9 @@ export class TournamentRuntime {
 
   _broadcast() {
     this.emit('state', { tableId: this.tableId });
+    // Coach panel (table sizes, hand states) rides the same beat; the
+    // socket layer only delivers it to coach-role sockets.
+    this.emit('coach_state', { tableId: this.tableId });
   }
 }
 

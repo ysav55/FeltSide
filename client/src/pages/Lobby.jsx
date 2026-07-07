@@ -113,21 +113,25 @@ export default function Lobby({ player, onLogout, onSeated }) {
                       <span className="text-slate-400 text-sm">
                         {fmtStart(t.scheduled_start)}
                       </span>
-                      {player.role === 'coach' && t.mode !== 'tournament' ? (
+                      {player.role === 'coach' ? (
                         <button
                           onClick={async () => {
                             try {
                               const res = await api(`/tables/${t.id}/open`, { method: 'POST' });
                               onSeated(res.table);
-                            } catch { /* stays scheduled */ }
+                            } catch (err) {
+                              setError(err.message === 'preset_required'
+                                ? 'This tournament has no preset attached — set one in the CRM or create it manually.'
+                                : 'Could not open the table.');
+                            }
                           }}
                           className="rounded-md bg-emerald-700 hover:bg-emerald-600 px-3 py-1 text-sm"
                         >
-                          Open table
+                          {t.mode === 'tournament' ? 'Open registration' : 'Open table'}
                         </button>
                       ) : (
                         <span className="rounded-md bg-slate-900 border border-slate-800 px-3 py-1 text-sm text-slate-500">
-                          Opens at lesson time
+                          {t.mode === 'tournament' ? 'Registration opens 1h before' : 'Opens at lesson time'}
                         </span>
                       )}
                     </>
@@ -142,6 +146,19 @@ export default function Lobby({ player, onLogout, onSeated }) {
                           className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1 text-sm"
                         >
                           Join
+                        </button>
+                      )}
+                      {t.mode === 'tournament' && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await api(`/tables/${t.id}`);
+                              onSeated(res.table);
+                            } catch { setError('Could not open the tournament.'); }
+                          }}
+                          className="rounded-md bg-emerald-700 hover:bg-emerald-600 px-3 py-1 text-sm"
+                        >
+                          View / register
                         </button>
                       )}
                     </>
