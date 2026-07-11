@@ -19,7 +19,7 @@ import http from 'node:http';
 import { PGlite } from '@electric-sql/pglite';
 import { migrate } from '../src/db/migrate.js';
 import { createApp } from '../src/app.js';
-import { seedCoach } from '../src/seed.js';
+import { seedCoach, seedTournamentPresets } from '../src/seed.js';
 import { attachSockets } from '../src/socket.js';
 import { hashPassword } from '../src/auth/passwords.js';
 
@@ -41,6 +41,9 @@ const config = {
 const db = new PGlite();
 await migrate(db);
 const coach = await seedCoach(db, config);
+// Match the real boot (src/index.js): without this the preset catalog is
+// empty, so the client's tournament picker has nothing to offer.
+await seedTournamentPresets(db);
 const app = createApp({
   db, config,
   tableTimers: { interHandMs: 10, actionMs: 60_000, disconnectGraceMs: 60_000, retentionMs: 60_000, idleCloseMs: 600_000 },

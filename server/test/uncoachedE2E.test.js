@@ -128,7 +128,11 @@ describe('uncoached cash end-to-end', () => {
     const rebuy = await request(app).post(`/api/tables/${tableId}/rebuy`)
       .set('Authorization', `Bearer ${tokens.P3}`).send({ buy_in: 5000 });
     expect(rebuy.status).toBe(200);
-    expect(runtime.engine.findSeat(ids.P3).stack).toBe(5000);
+    // Assert the snapshot the rebuy itself returned, not live engine state:
+    // interHandMs is 25ms, so the next hand can deal (and P3 can post a
+    // blind) before a later read lands.
+    const p3AtRebuy = rebuy.body.table.seats.find((s) => s && s.playerId === ids.P3);
+    expect(p3AtRebuy.stack).toBe(5000);
 
     // Hands 7–11: five more split hands → 11 total.
     for (let hand = 7; hand <= 11; hand++) {
