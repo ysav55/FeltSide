@@ -1,0 +1,385 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api } from '../api.js';
+import { getSocket } from '../socket.js';
+import PlayingCard from '../components/PlayingCard.jsx';
+import DealingPanel from '../components/DealingPanel.jsx';
+import CoachControls from '../components/CoachControls.jsx';
+import GroupReviewOverlay from '../components/GroupReviewOverlay.jsx';
+import {
+  TournamentTopBar, TournamentLobby, TournamentStandings,
+  DealBanner, BustPanel, AddonBanner, TournamentCoachPanel,
+} from '../components/TournamentPanel.jsx';
+
+const fmt = (n) => Number(n ?? 0).toLocaleString('en-US');
+
+function ActionTimer({ deadline }) {
+  const [left, setLeft] = useState(null);
+  useEffect(() => {
+    if (!deadline) { setLeft(null); return undefined; }
+    const tick = () => setLeft(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [deadline]);
+  if (left === null) return null;
+  return (
+    <span className={`font-mono text-sm ${left <= 5 ? 'text-rose-400' : 'text-slate-400'}`}>
+      {left}s
+    </span>
+  );
+}
+
+function Seat({ seat, isButton, isToAct, isMe }) {
+  if (!seat) {
+    return (
+      <div className="rounded-lg border border-dashed border-slate-800 px-3 py-2 text-slate-600 text-xs text-center">
+        empty
+      </div>
+    );
+  }
+  const dim = seat.folded || seat.sittingOut || !seat.inHand;
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${isToAct ? 'border-emerald-400' : 'border-slate-700'} ${dim ? 'opacity-50' : ''} bg-slate-900`}>
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-medium truncate">{seat.name}{isMe ? ' (you)' : ''}</span>
+        {isButton && (
+          <span className="text-[10px] rounded-full bg-amber-400 text-black font-bold w-4 h-4 flex items-center justify-center">D</span>
+        )}
+      </div>
+      <div className="text-xs font-mono text-emerald-300">{fmt(seat.stack)}</div>
+      <div className="flex gap-1 mt-1 items-center">
+        {seat.inHand && !seat.folded && (
+          seat.holeCards
+            ? seat.holeCards.map((c) => <PlayingCard key={c} card={c} small />)
+            : <><PlayingCard hidden small /><PlayingCard hidden small /></>
+        )}
+        {seat.betThisRound > 0 && (
+          <span className="text-xs text-amber-300 font-mono ml-1">{fmt(seat.betThisRound)}</span>
+        )}
+      </div>
+      {seat.sittingOut && <div className="text-[10px] text-slate-500 mt-0.5">sitting out</div>}
+      {seat.folded && <div className="text-[10px] text-slate-500 mt-0.5">folded</div>}
+    </div>
+  );
+}
+
+export default function TablePage({ player, table: initialTable, onLeft }) {
+  const [table, setTable] = useState(initialTable);
+  const [coachView, setCoachView] = useState(null);
+  const [groupReview, setGroupReview] = useState(null);
+  const [raiseTo, setRaiseTo] = useState('');
+  const [error, setError] = useState(null);
+  const [rebuyAmount, setRebuyAmount] = useState('');
+  const socketRef = useRef(null);
+
+  const tableId = initialTable.tableId;
+  const isCoach = player.role === 'coach';
+  const coached = table.mode === 'coached_cash';
+  const tournament = table.mode === 'tournament' ? table.tournament : null;
+  const registered = Boolean(tournament?.myEntry?.registered);
+
+  useEffect(() => {
+    const socket = getSocket();
+    socketRef.current = socket;
+    const onState = (state) => { if (state.tableId === tableId) setTable(state); };
+    const onCoach = (state) => { if (state.tableId === tableId) setCoachView(state); };
+    const onGroupReview = (state) => {
+      // null when the coach exits ("Back to Play"); a payload while reviewing.
+      if (state === null || state.tableId === tableId) setGroupReview(state);
+    };
+    socket.on('table:state', onState);
+    socket.on('table:coach_state', onCoach);
+    socket.on('table:group_review', onGroupReview);
+    const enter = () => {
+      // A seated player enters; the coach can also observe unseated.
+      socket.emit('table:enter', { tableId }, (res) => {
+        if (res?.table) return setTable(res.table);
+        if (isCoach) {
+          socket.emit('table:observe', { tableId }, (obs) => {
+            if (obs?.table) setTable(obs.table);
+            if (obs?.coach) setCoachView(obs.coach);
+          });
+        }
+      });
+      if (isCoach) {
+        socket.emit('coach:command', { tableId, command: 'state' }, (res) => {
+          if (res?.coach) setCoachView(res.coach);
+        });
+      }
+    };
+    if (socket.connected) enter();
+    socket.on('connect', enter);
+    return () => {
+      socket.off('table:state', onState);
+      socket.off('table:coach_state', onCoach);
+      socket.off('connect', enter);
+    };
+  }, [tableId, isCoach, registered]);
+
+  // An unregistered tournament viewer has no socket room yet — poll the
+  // lobby state until they register (then the socket takes over).
+  useEffect(() => {
+    if (!tournament || registered || isCoach) return undefined;
+    const id = setInterval(async () => {
+      try {
+        const res = await api(`/tables/${tableId}`);
+        if (res?.table) setTable(res.table);
+      } catch { /* table may have completed */ }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [tableId, tournament ? 1 : 0, registered, isCoach]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sendCoach = useCallback((command, payload = {}, cb) => {
+    socketRef.current?.emit('coach:command', { tableId, command, payload }, (res) => {
+      if (res?.coach) setCoachView(res.coach);
+      cb?.(res);
+    });
+  }, [tableId]);
+
+  const mySeat = table.seats?.find((s) => s && s.playerId === player.id) || null;
+  const myTurn = mySeat && table.toAct === mySeat.seatIndex;
+
+  const legal = useMemo(() => {
+    if (!myTurn || !mySeat) return null;
+    const toCall = Math.min(table.currentBet - mySeat.betThisRound, mySeat.stack);
+    return {
+      check: toCall === 0,
+      call: toCall > 0 ? toCall : null,
+      canBet: table.currentBet === 0 && mySeat.stack > 0,
+      canRaise: table.currentBet > 0 && mySeat.stack > toCall,
+      maxTo: mySeat.betThisRound + mySeat.stack,
+    };
+  }, [myTurn, mySeat, table]);
+
+  const send = useCallback((action, amount) => {
+    setError(null);
+    socketRef.current?.emit('table:action', { tableId, action, amount }, (res) => {
+      if (res?.error) setError(res.error.replaceAll('_', ' '));
+    });
+  }, [tableId]);
+
+  async function toggleSitOut() {
+    socketRef.current?.emit('table:sitout', { tableId, sit_out: !mySeat.sittingOut }, () => {});
+  }
+
+  async function leave() {
+    try {
+      await api(`/tables/${tableId}/leave`, { method: 'POST' });
+      onLeft();
+    } catch {
+      setError('Could not leave the table.');
+    }
+  }
+
+  async function rebuy() {
+    setError(null);
+    try {
+      await api(`/tables/${tableId}/rebuy`, {
+        method: 'POST', body: { buy_in: Number(rebuyAmount) },
+      });
+      setRebuyAmount('');
+    } catch (err) {
+      setError(err.message === 'insufficient_balance'
+        ? 'Not enough bankroll for that re-buy.' : 'Re-buy failed.');
+    }
+  }
+
+  const busted = mySeat && mySeat.stack === 0 && !mySeat.inHand;
+
+  // Players (and the coach) follow the coach-driven group review (M6 §6).
+  // The coach still sees their controls beneath, to navigate / go back.
+  const showOverlay = groupReview && !isCoach;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+      {showOverlay && <GroupReviewOverlay review={groupReview} />}
+      <header className="border-b border-slate-800 px-4 py-2 flex items-center justify-between">
+        <div>
+          <span className="text-emerald-400 font-semibold">FeltSide</span>
+          <span className="text-slate-400 text-sm ml-3">
+            {tournament
+              ? table.name
+              : `${table.name || 'Cash game'} · ${table.config.smallBlind}/${table.config.bigBlind}`}
+          </span>
+        </div>
+        <div className="flex items-center gap-3 text-sm">
+          <ActionTimer deadline={myTurn ? table.actionDeadline : null} />
+          {mySeat && !coached && !tournament && (
+            <button onClick={toggleSitOut} className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1">
+              {mySeat.sittingOut ? 'Sit in' : 'Sit out'}
+            </button>
+          )}
+          {mySeat && !tournament && (
+            <button onClick={leave} className="rounded-md bg-rose-900/60 hover:bg-rose-900 px-3 py-1">
+              Leave table
+            </button>
+          )}
+          {/* §8: a tournament seat is never vacated — leaving the page only
+              disconnects; blinds post and the timer folds in absentia. */}
+          {(tournament || (!mySeat && isCoach)) && (
+            <button onClick={onLeft} className="rounded-md bg-slate-800 hover:bg-slate-700 px-3 py-1">
+              Back to lobby
+            </button>
+          )}
+        </div>
+      </header>
+
+      <main className="flex-1 max-w-5xl w-full mx-auto p-4 flex flex-col gap-4">
+        {/* Tournament surface (M7 §9) */}
+        {tournament && tournament.status !== 'registering' && (
+          <TournamentTopBar tournament={tournament} paused={table.paused} />
+        )}
+        {tournament && tournament.deal && (
+          <DealBanner tableId={tableId} tournament={tournament} player={player} onError={setError} />
+        )}
+        {tournament && tournament.onBreak && tournament.myEntry.canAddon && (
+          <AddonBanner tableId={tableId} onError={setError} />
+        )}
+
+        {/* Coached-table status banners (neutral for players — DEALING §3/§6) */}
+        {table.paused && (
+          <div className="rounded-lg border border-sky-800 bg-sky-950/40 px-4 py-2 text-sky-200 text-sm">
+            Game paused by the coach.
+          </div>
+        )}
+        {table.awaitingDeal && (
+          <div className="rounded-lg border border-amber-800 bg-amber-950/40 px-4 py-2 text-amber-200 text-sm">
+            The dealer is acting…
+          </div>
+        )}
+
+        {/* Pre-start tournament lobby (§3 registering) */}
+        {tournament && tournament.status === 'registering' ? (
+          <TournamentLobby
+            tableId={tableId}
+            tournament={tournament}
+            player={player}
+            onError={setError}
+            onUpdate={setTable}
+          />
+        ) : (
+          <>
+            {/* Board + pot */}
+            <div className="rounded-2xl border border-emerald-900 bg-emerald-950/40 p-6 flex flex-col items-center gap-3">
+              <div className="flex gap-2 min-h-16 items-center">
+                {table.board.length === 0
+                  ? <span className="text-slate-600 text-sm">
+                      {table.phase === 'waiting' ? 'Waiting for players…' : 'Preflop'}
+                    </span>
+                  : table.board.map((c) => <PlayingCard key={c} card={c} />)}
+              </div>
+              <div className="text-amber-300 font-mono">Pot: {fmt(table.pot)}</div>
+              <div className="text-xs text-slate-500 uppercase tracking-wide">{table.phase.replaceAll('_', ' ')}</div>
+            </div>
+
+            {/* Seats */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {table.seats.map((seat, idx) => (
+                <Seat
+                  key={idx}
+                  seat={seat}
+                  isButton={table.button === idx}
+                  isToAct={table.toAct === idx}
+                  isMe={seat?.playerId === player.id}
+                />
+              ))}
+            </div>
+          </>
+        )}
+
+        {error && <p className="text-rose-400 text-sm">{error}</p>}
+
+        {/* Betting controls */}
+        {myTurn && legal && (
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-4 flex flex-wrap items-center gap-3">
+            <button onClick={() => send('fold')} className="rounded-md bg-rose-800 hover:bg-rose-700 px-4 py-2 font-medium">
+              Fold
+            </button>
+            {legal.check && (
+              <button onClick={() => send('check')} className="rounded-md bg-slate-700 hover:bg-slate-600 px-4 py-2 font-medium">
+                Check
+              </button>
+            )}
+            {legal.call && (
+              <button onClick={() => send('call')} className="rounded-md bg-emerald-700 hover:bg-emerald-600 px-4 py-2 font-medium">
+                Call {fmt(legal.call)}
+              </button>
+            )}
+            {(legal.canBet || legal.canRaise) && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  placeholder={legal.canBet ? 'Bet' : 'Raise to'}
+                  value={raiseTo}
+                  onChange={(e) => setRaiseTo(e.target.value)}
+                  className="w-28 rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-sm"
+                />
+                <button
+                  onClick={() => send(legal.canBet ? 'bet' : 'raise', Number(raiseTo))}
+                  className="rounded-md bg-amber-600 hover:bg-amber-500 px-4 py-2 font-medium"
+                >
+                  {legal.canBet ? 'Bet' : 'Raise'}
+                </button>
+                <button
+                  onClick={() => send(legal.canBet ? 'bet' : 'raise', legal.maxTo)}
+                  className="rounded-md bg-amber-800 hover:bg-amber-700 px-3 py-2 text-sm"
+                >
+                  All-in {fmt(legal.maxTo)}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tournament standings + ICM overlay (§7) */}
+        {tournament && tournament.status !== 'registering' && (
+          <TournamentStandings tournament={tournament} />
+        )}
+
+        {/* Tournament bust: re-entry window / final result */}
+        {tournament && !mySeat && registered && tournament.status !== 'registering' && (
+          <BustPanel tableId={tableId} tournament={tournament} onError={setError} />
+        )}
+
+        {/* Coach tournament panel — interventions + fast table switching */}
+        {isCoach && tournament && coachView && (
+          <TournamentCoachPanel
+            table={table} coach={coachView} send={sendCoach}
+            onEnded={() => {}} onError={setError}
+          />
+        )}
+
+        {/* Coach sidebar — panel + controls (coached tables only) */}
+        {isCoach && coached && coachView && (
+          <div className="flex flex-col gap-3">
+            <DealingPanel table={table} coach={coachView} send={sendCoach} />
+            <CoachControls
+              table={table} coach={coachView} send={sendCoach} onEnded={onLeft}
+              groupReview={groupReview}
+            />
+          </div>
+        )}
+
+        {/* Bust → re-entry (uncoached bankroll flow only) */}
+        {busted && !coached && !tournament && (
+          <div className="rounded-xl border border-amber-700 bg-amber-950/30 p-4 flex items-center gap-3">
+            <span className="text-amber-200 text-sm">You busted. Re-enter with a new buy-in?</span>
+            <input
+              type="number"
+              placeholder="Buy-in"
+              value={rebuyAmount}
+              onChange={(e) => setRebuyAmount(e.target.value)}
+              className="w-28 rounded-md bg-slate-800 border border-slate-700 px-3 py-2 text-sm"
+            />
+            <button onClick={rebuy} className="rounded-md bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium">
+              Re-buy
+            </button>
+            <button onClick={leave} className="text-slate-400 text-sm hover:text-slate-200">
+              Leave instead
+            </button>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

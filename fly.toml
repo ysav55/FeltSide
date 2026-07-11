@@ -1,0 +1,42 @@
+# FeltSide engine — Fly.io app config (M3).
+# Region: otp (Bucharest) — the Fly region closest to Israel.
+#
+# Scale-to-zero is ON (CONTRACT §2 tolerates cold starts; the CRM's client
+# timeout is ≥15s). The proxy stops the machine only when no connections are
+# open — a seated table means live socket connections, which pin the machine
+# awake (RUNTIME §1). If everyone disconnects, the runtime's own timers cash
+# players out and close the table before idleness can cost anything; stacks
+# are snapshotted after every completed hand, so a stop mid-hand voids only
+# the in-flight hand (RUNTIME §1 recovery posture).
+
+app = "feltside"
+primary_region = "otp"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[deploy]
+  release_command = "node server/scripts/migrate.js"
+
+[env]
+  PORT = "3001"
+  # Locked review_url base (CONTRACT §4.4) — must match the public host.
+  PUBLIC_BASE_URL = "https://feltside.fly.dev"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
